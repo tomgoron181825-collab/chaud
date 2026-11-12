@@ -381,7 +381,7 @@ create policy profiles_insert on public.profiles for insert with check (id = aut
 create policy profiles_update on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
 
 -- Groupes
-create policy groups_select on public.groups for select using (public.is_member(id));
+create policy groups_select on public.groups for select using (created_by = auth.uid() or public.is_member(id));
 create policy groups_insert on public.groups for insert with check (created_by = auth.uid());
 create policy groups_update on public.groups for update using (public.is_admin(id));
 create policy groups_delete on public.groups for delete using (public.is_admin(id));
