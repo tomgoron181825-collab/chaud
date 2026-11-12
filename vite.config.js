@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // BASE_PATH est fourni par la mise en ligne GitHub Pages (ex. /app-potes/)
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const name = env.VITE_APP_NAME || 'Bande'
+  const name = env.VITE_APP_NAME || 'Chaud'
   const manifest = {
     name, short_name: name, lang: 'fr', start_url: './', scope: './', display: 'standalone',
     background_color: '#FAFBFD', theme_color: '#1F3A68',
