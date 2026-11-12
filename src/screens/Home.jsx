@@ -8,7 +8,7 @@ export default function Home({ ctx }) {
   const now = new Date()
   const today = `${DAYS[now.getDay()].replace('.', '')} ${now.getDate()} ${MONTHS[now.getMonth()]}`
 
-  if (!data.groups.length) {
+  if (!data.groups.length && !data.plans.length) {
     return (
       <>
         <Header ctx={ctx} today={today} />
@@ -31,7 +31,7 @@ export default function Home({ ctx }) {
   return (
     <>
       <Header ctx={ctx} today={today} />
-      <Chauds ctx={ctx} />
+      {data.groups.length > 0 && <Chauds ctx={ctx} />}
       {todo.length > 0 && <><div className="section-label">En attente de ta réponse</div>{todo.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} showGroup />)}</>}
       <div className="section-label">Tes prochains plans</div>
       {rest.length ? rest.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} showGroup />) : <div className="empty">Rien de prévu. Lance un plan avec le +</div>}
@@ -44,7 +44,7 @@ export default function Home({ ctx }) {
             return (
               <button key={p.id} className="mem" onClick={() => ctx.openPlan(p.id)}>
                 <div className="mem-date"><b>{d.getDate()}</b><span>{MONTHS[d.getMonth()]}</span></div>
-                <div className="plan-body"><b>{p.title}</b><div className="meta">{n} photo{n > 1 ? 's' : ''} · {data.groups.find((g) => g.id === p.group_id)?.name}</div></div>
+                <div className="plan-body"><b>{p.title}</b><div className="meta">{n} photo{n > 1 ? 's' : ''}{data.groups.find((g) => g.id === p.group_id) ? ' · ' + data.groups.find((g) => g.id === p.group_id).name : ''}</div></div>
               </button>
             )
           })}

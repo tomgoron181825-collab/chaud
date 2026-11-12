@@ -11,7 +11,9 @@ export default function PlanSheet({ ctx, plan, onClose }) {
   const [run, busy] = useAction()
   const toast = useToast()
   const group = data.groups.find((g) => g.id === plan.group_id)
-  const members = (data.members[plan.group_id] || []).map((m) => m.user_id)
+  const guests = data.guests[plan.id] || []
+  const members = [...(data.members[plan.group_id] || []).map((m) => m.user_id), ...guests.map((g) => g.user_id)]
+  const guestOf = (u) => guests.find((g) => g.user_id === u)
   const resp = data.responses[plan.id] || []
   const statusOf = (u) => resp.find((r) => r.user_id === u)?.status
   const mine = statusOf(me.id)
@@ -45,7 +47,7 @@ export default function PlanSheet({ ctx, plan, onClose }) {
 
   return (
     <Sheet onClose={onClose}>
-      <div className="row"><span className="chip grp">{group?.name}</span><span className="chip">{TYPES[plan.type]}</span></div>
+      <div className="row">{group ? <span className="chip grp">{group.name}</span> : <span className="chip plus">Tu es le +1 de {name(guestOf(me.id)?.invited_by)}</span>}<span className="chip">{TYPES[plan.type]}</span></div>
       <h3 className="sheet-title">{plan.title}</h3>
       <div className="meta">{when(plan.starts_at)}{plan.place && <><br />{plan.place}</>}</div>
       {plan.description && <p className="desc">{plan.description}</p>}
@@ -68,10 +70,11 @@ export default function PlanSheet({ ctx, plan, onClose }) {
       <div className="section-label">Qui vient</div>
       <div className="who">
         {['go', 'maybe', 'no'].flatMap((s) => resp.filter((r) => r.status === s).map((r) => (
-          <span key={r.user_id}><i className="dot" style={{ background: DOT[s] }} />{data.profiles[r.user_id]?.pseudo}</span>
+          <span key={r.user_id}><i className="dot" style={{ background: DOT[s] }} />{data.profiles[r.user_id]?.pseudo}{guestOf(r.user_id) && <small className="plus-tag">+1</small>}</span>
         )))}
-        {!past && noAnswer.map((u) => <span key={u} className="meta"><i className="dot" style={{ background: 'var(--line)' }} />{data.profiles[u]?.pseudo} (pas répondu)</span>)}
+        {!past && noAnswer.map((u) => <span key={u} className="meta"><i className="dot" style={{ background: 'var(--line)' }} />{data.profiles[u]?.pseudo}{guestOf(u) && ' +1'} (pas répondu)</span>)}
       </div>
+      {!past && <PlusOne ctx={ctx} plan={plan} members={members} run={run} after={after} />}
 
       {!past && <Rides ctx={ctx} plan={plan} run={run} busy={busy} after={after} name={name} />}
       {!past && plan.bring_enabled && <Bring ctx={ctx} plan={plan} run={run} after={after} />}
@@ -82,6 +85,35 @@ export default function PlanSheet({ ctx, plan, onClose }) {
         <button className="link danger" onClick={del} style={{ marginTop: 18 }}>Supprimer ce plan</button>
       )}
     </Sheet>
+  )
+}
+
+// Inviter un ami qui n'est pas dans le groupe
+function PlusOne({ ctx, plan, members, run, after }) {
+  const { data, me } = ctx
+  const [open, setOpen] = useState(false)
+  const friends = data.friends.filter((f) => f.status === 'accepted' && !members.includes(f.id))
+  const myGuests = (data.guests[plan.id] || []).filter((g) => g.invited_by === me.id)
+  const invite = async (id) => after(await run(() => supabase.from('plan_guests').insert({ plan_id: plan.id, user_id: id }), `${data.profiles[id]?.pseudo} est invité`))
+  const remove = async (id) => after(await run(() => supabase.from('plan_guests').delete().eq('plan_id', plan.id).eq('user_id', id)))
+  return (
+    <div style={{ marginTop: 10 }}>
+      {myGuests.length > 0 && <p className="meta">Tes +1 : {myGuests.map((g) => (
+        <span key={g.user_id}>{data.profiles[g.user_id]?.pseudo} <button className="link small" onClick={() => remove(g.user_id)}>retirer</button> </span>
+      ))}</p>}
+      {!open ? <button className="link strong" onClick={() => setOpen(true)}>+1 : inviter un ami</button> : (
+        <div className="card">
+          <div className="row between"><b>Inviter un ami</b><button className="link small" onClick={() => setOpen(false)}>fermer</button></div>
+          {friends.length ? friends.map((f) => (
+            <div className="row between" key={f.id} style={{ padding: '6px 0' }}>
+              <span className="row" style={{ gap: 8 }}><Face p={data.profiles[f.id]} /> {data.profiles[f.id]?.pseudo}</span>
+              <button className="btn small" onClick={() => invite(f.id)}>Inviter</button>
+            </div>
+          )) : <p className="note" style={{ marginTop: 6 }}>Aucun ami à inviter. Ajoute des amis depuis l'onglet Groupes, avec leur code ami.</p>}
+          <p className="note">Ton +1 voit ce plan et peut répondre, mais pas le reste du groupe.</p>
+        </div>
+      )}
+    </div>
   )
 }
 

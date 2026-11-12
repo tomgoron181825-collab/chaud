@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { DRINKS, PRESET_DEFAULTS, units, fmtU } from '../lib/format'
-import { DrinkIcon, Sheet, Switch, useAction } from '../components/ui'
+import { DrinkIcon, Sheet, Switch, useAction, useToast } from '../components/ui'
+import { estimateBac, fmtBac, preventionMessage, thresholdToast } from '../lib/prevention'
+import { fmtTime } from '../lib/format'
 
 const STARTERS = [
   { name: 'Demi', kind: 'biere', cl: 25, deg: 5 },
@@ -25,24 +27,36 @@ export default function Conso({ ctx }) {
   const [tonight, setTonight] = useState([])
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [settings, setSettings] = useState(undefined)
+  const [, tick] = useState(0)
+  const toast = useToast()
+  useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 60000); return () => clearInterval(t) }, [])
 
   const load = async () => {
     const [p, t] = await Promise.all([
       supabase.from('drink_presets').select('*').eq('user_id', me.id).order('created_at'),
       supabase.from('drinks').select('*').eq('user_id', me.id).gte('drunk_at', nightStart().toISOString()).order('drunk_at'),
-    ])
+      supabase.from('private_settings').select('*').eq('user_id', me.id).maybeSingle(),
+    ]).then((r) => { setSettings(r[2].data || null); return r })
     setPresets(p.data || [])
     setTonight(t.data || [])
   }
   useEffect(() => { load() }, [])
 
-  const add = async (d) => { const r = await run(() => supabase.from('drinks').insert(d), `${d.name} ajouté`); if (r) load() }
+  const add = async (d) => {
+    const before = tonight.reduce((a, x) => a + Number(x.units), 0)
+    const r = await run(() => supabase.from('drinks').insert(d))
+    if (!r) return
+    toast(thresholdToast(before, before + Number(d.units)) || `${d.name} ajouté`)
+    load()
+  }
   const undo = async (id) => { const r = await run(() => supabase.from('drinks').delete().eq('id', id)); if (r) load() }
   const delPreset = async (id) => { const r = await run(() => supabase.from('drink_presets').delete().eq('id', id)); if (r) load() }
   const setShare = async (gid, v) => { const r = await run(() => supabase.from('group_members').update({ share_conso: v }).eq('group_id', gid).eq('user_id', me.id)); if (r) ctx.reload() }
 
   const alc = tonight.reduce((a, d) => a + Number(d.units), 0)
   const water = tonight.filter((d) => d.kind === 'eau').length
+  const prev = preventionMessage(alc)
 
   return (
     <>
@@ -91,8 +105,10 @@ export default function Conso({ ctx }) {
             {tonight.map((d) => <li key={d.id}><span>{d.name}{Number(d.units) > 0 && <span className="meta"> · {fmtU(d.units)} std</span>}</span><button className="link small" onClick={() => undo(d.id)}>Retirer</button></li>)}
           </ul>
         ) : <p className="note">Tape sur un de tes verres pour l'ajouter.</p>}
-        {alc >= 4 && <p className="note warn">Pense à boire de l'eau entre deux verres, et à rentrer sans conduire.</p>}
+        {prev && <p className={'prev ' + prev.level}>{prev.text}</p>}
       </div>
+
+      <Bac drinks={tonight} settings={settings} onSaved={setSettings} me={me} alc={alc} />
 
       <div className="section-label">Qui voit ma conso</div>
       <div className="card" style={{ marginTop: 0 }}>
@@ -140,5 +156,55 @@ function NewPreset({ onClose, onSaved }) {
         <button className="btn wide" disabled={busy}>Ajouter à mes verres</button>
       </form>
     </Sheet>
+  )
+}
+
+function Bac({ drinks, settings, onSaved, me, alc }) {
+  const [run, busy] = useAction()
+  const [editing, setEditing] = useState(false)
+  const [weight, setWeight] = useState('')
+  const [sex, setSex] = useState('h')
+  if (settings === undefined) return null
+
+  const save = async (e) => {
+    e.preventDefault()
+    const w = parseFloat(String(weight).replace(',', '.'))
+    if (!(w >= 30 && w <= 250)) return
+    const r = await run(() => supabase.from('private_settings').upsert({ user_id: me.id, weight_kg: w, sex, updated_at: new Date().toISOString() }).select().single(), 'Enregistré, visible par toi seul')
+    if (r?.data) { onSaved(r.data); setEditing(false) }
+  }
+
+  if (!settings || editing) {
+    return (
+      <form className="card" onSubmit={save}>
+        <b>Estimer mon taux d'alcool</b>
+        <p className="note" style={{ marginTop: 4 }}>Indique ton poids pour avoir une estimation pendant la soirée. Visible par toi seul.</p>
+        <div className="row nowrap" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: 1, minWidth: 0 }}><label htmlFor="bac-w">Poids (kg)</label><input id="bac-w" inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder={settings?.weight_kg ? String(settings.weight_kg) : 'Ex. 70'} /></div>
+          <div className="types two" style={{ flex: 1.4 }}>
+            <button type="button" aria-pressed={sex === 'h'} onClick={() => setSex('h')}>Homme</button>
+            <button type="button" aria-pressed={sex === 'f'} onClick={() => setSex('f')}>Femme</button>
+          </div>
+        </div>
+        <div className="row" style={{ marginTop: 10 }}><button className="btn small" disabled={busy}>Enregistrer</button>{settings && <button type="button" className="btn small ghost" onClick={() => setEditing(false)}>Annuler</button>}</div>
+      </form>
+    )
+  }
+
+  const est = estimateBac(drinks, settings)
+  const b = est?.bac || 0
+  return (
+    <div className="card bac">
+      <div className="row between">
+        <div>
+          <div className="meta">Taux estimé maintenant</div>
+          <div className="big" style={{ color: b >= 0.5 ? 'var(--danger)' : b > 0.2 ? 'var(--maybe)' : 'var(--fg)' }}>≈ {fmtBac(b)} g/L</div>
+          {est?.soberAt && <div className="meta">Retour à 0 estimé vers {fmtTime(est.soberAt)}</div>}
+        </div>
+        <button className="link small" onClick={() => { setWeight(String(settings.weight_kg)); setSex(settings.sex); setEditing(true) }}>Modifier mon poids</button>
+      </div>
+      {alc > 0 && <p className="prev high" style={{ marginBottom: 0 }}>Tu as bu : ne prends pas le volant, même si l'estimation est basse. Le SAM est là pour ça.</p>}
+      <p className="note">Estimation très approximative : elle dépend de ce que tu as mangé, de ta fatigue, de la vitesse à laquelle tu as bu. Elle ne remplace jamais un éthylotest. Limite pour conduire : 0,5 g/L, et 0,2 g/L pour les jeunes conducteurs.</p>
+    </div>
   )
 }

@@ -11,6 +11,7 @@ create table public.profiles (
   pseudo text not null check (char_length(pseudo) between 1 and 30),
   color text not null default '#FF5A1F',
   birth_date date not null,
+  friend_code text not null unique default upper(substr(md5(random()::text), 1, 6)),
   created_at timestamptz not null default now(),
   constraint adulte check (birth_date <= (current_date - interval '18 years'))
 );
@@ -160,6 +161,33 @@ create table public.drinks (
 );
 create index on public.drinks (user_id, drunk_at);
 
+-- Réglages privés pour estimer le taux d'alcool (personne d'autre ne les voit)
+create table public.private_settings (
+  user_id uuid primary key default auth.uid() references public.profiles(id) on delete cascade,
+  weight_kg numeric(5, 1) check (weight_kg between 30 and 250),
+  sex text check (sex in ('h', 'f')),
+  updated_at timestamptz not null default now()
+);
+
+-- ---------- Amis ----------
+create table public.friendships (
+  requester uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  addressee uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted')),
+  created_at timestamptz not null default now(),
+  primary key (requester, addressee),
+  check (requester <> addressee)
+);
+
+-- ---------- +1 : un ami invité à un plan d'un groupe dont il ne fait pas partie ----------
+create table public.plan_guests (
+  plan_id uuid not null references public.plans on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  invited_by uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (plan_id, user_id)
+);
+
 -- =====================================================================
 -- Fonctions utilitaires (security definer = contournent les règles,
 -- utilisées seulement pour vérifier l'appartenance à un groupe)
@@ -205,6 +233,56 @@ language sql security definer stable set search_path = public as $$
     where a.user_id = other and a.share_conso and b.user_id = auth.uid()
   );
 $$;
+
+create function public.is_guest(p uuid) returns boolean
+language sql security definer stable set search_path = public as $$
+  select exists (select 1 from plan_guests where plan_id = p and user_id = auth.uid());
+$$;
+
+-- Je vois un plan si je suis dans son groupe ou invité en +1
+create function public.can_see_plan(p uuid) returns boolean
+language sql security definer stable set search_path = public as $$
+  select public.is_member(public.plan_group(p)) or public.is_guest(p);
+$$;
+
+create function public.are_friends(other uuid) returns boolean
+language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from friendships
+    where status = 'accepted'
+      and ((requester = auth.uid() and addressee = other) or (requester = other and addressee = auth.uid()))
+  );
+$$;
+
+-- Je vois le profil de quelqu'un si on partage un groupe, une amitié (même en attente) ou un plan
+create function public.sees_profile(other uuid) returns boolean
+language sql security definer stable set search_path = public as $$
+  select other = auth.uid()
+    or public.shares_group(other)
+    or exists (select 1 from friendships where (requester = auth.uid() and addressee = other) or (requester = other and addressee = auth.uid()))
+    or exists (select 1 from plan_guests g where g.user_id = other and public.can_see_plan(g.plan_id))
+    or exists (
+      select 1 from plan_guests g join plans p on p.id = g.plan_id join group_members m on m.group_id = p.group_id
+      where g.user_id = auth.uid() and m.user_id = other
+    );
+$$;
+
+-- Ajouter un ami avec son code (accepte directement si l'autre m'avait déjà demandé)
+create function public.add_friend(code text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare other uuid;
+begin
+  if auth.uid() is null then raise exception 'non connecté'; end if;
+  select id into other from profiles where friend_code = upper(trim(code));
+  if other is null then raise exception 'Code ami inconnu'; end if;
+  if other = auth.uid() then raise exception 'C''est ton propre code'; end if;
+  if exists (select 1 from friendships where requester = other and addressee = auth.uid()) then
+    update friendships set status = 'accepted' where requester = other and addressee = auth.uid();
+  else
+    insert into friendships (requester, addressee) values (auth.uid(), other) on conflict do nothing;
+  end if;
+  return other;
+end $$;
 
 -- Le créateur d'un groupe en devient admin
 create function public.on_group_created() returns trigger
@@ -293,9 +371,12 @@ alter table public.chauds enable row level security;
 alter table public.chaud_joins enable row level security;
 alter table public.drink_presets enable row level security;
 alter table public.drinks enable row level security;
+alter table public.private_settings enable row level security;
+alter table public.friendships enable row level security;
+alter table public.plan_guests enable row level security;
 
 -- Profils : je vois le mien et ceux des membres de mes groupes
-create policy profiles_select on public.profiles for select using (id = auth.uid() or public.shares_group(id));
+create policy profiles_select on public.profiles for select using (public.sees_profile(id));
 create policy profiles_insert on public.profiles for insert with check (id = auth.uid());
 create policy profiles_update on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
 
@@ -311,45 +392,45 @@ create policy members_update on public.group_members for update using (user_id =
 create policy members_delete on public.group_members for delete using (user_id = auth.uid() or public.is_admin(group_id));
 
 -- Plans
-create policy plans_select on public.plans for select using (public.is_member(group_id));
+create policy plans_select on public.plans for select using (public.is_member(group_id) or public.is_guest(id));
 create policy plans_insert on public.plans for insert with check (public.is_member(group_id) and created_by = auth.uid());
 create policy plans_update on public.plans for update using (created_by = auth.uid());
 create policy plans_delete on public.plans for delete using (created_by = auth.uid() or public.is_admin(group_id));
 
 -- Réponses, commentaires, besoins de trajet, dépenses, photos : lecture par le groupe, écriture pour soi
-create policy responses_select on public.plan_responses for select using (public.is_member(public.plan_group(plan_id)));
+create policy responses_select on public.plan_responses for select using (public.can_see_plan(plan_id));
 create policy responses_write on public.plan_responses for all
-  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member(public.plan_group(plan_id)));
+  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.can_see_plan(plan_id));
 
-create policy comments_select on public.plan_comments for select using (public.is_member(public.plan_group(plan_id)));
-create policy comments_insert on public.plan_comments for insert with check (user_id = auth.uid() and public.is_member(public.plan_group(plan_id)));
+create policy comments_select on public.plan_comments for select using (public.can_see_plan(plan_id));
+create policy comments_insert on public.plan_comments for insert with check (user_id = auth.uid() and public.can_see_plan(plan_id));
 create policy comments_delete on public.plan_comments for delete using (user_id = auth.uid());
 
-create policy rides_select on public.rides for select using (public.is_member(public.plan_group(plan_id)));
+create policy rides_select on public.rides for select using (public.can_see_plan(plan_id));
 create policy rides_write on public.rides for all
-  using (driver_id = auth.uid()) with check (driver_id = auth.uid() and public.is_member(public.plan_group(plan_id)));
+  using (driver_id = auth.uid()) with check (driver_id = auth.uid() and public.can_see_plan(plan_id));
 
-create policy passengers_select on public.ride_passengers for select using (public.is_member(public.plan_group(public.ride_plan(ride_id))));
+create policy passengers_select on public.ride_passengers for select using (public.can_see_plan(public.ride_plan(ride_id)));
 create policy passengers_write on public.ride_passengers for all
-  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member(public.plan_group(public.ride_plan(ride_id))));
+  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.can_see_plan(public.ride_plan(ride_id)));
 
-create policy needs_select on public.ride_needs for select using (public.is_member(public.plan_group(plan_id)));
+create policy needs_select on public.ride_needs for select using (public.can_see_plan(plan_id));
 create policy needs_write on public.ride_needs for all
-  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member(public.plan_group(plan_id)));
+  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.can_see_plan(plan_id));
 
-create policy bring_select on public.bring_items for select using (public.is_member(public.plan_group(plan_id)));
-create policy bring_insert on public.bring_items for insert with check (public.is_member(public.plan_group(plan_id)));
+create policy bring_select on public.bring_items for select using (public.can_see_plan(plan_id));
+create policy bring_insert on public.bring_items for insert with check (public.can_see_plan(plan_id));
 create policy bring_update on public.bring_items for update
-  using (public.is_member(public.plan_group(plan_id)))
+  using (public.can_see_plan(plan_id))
   with check (taken_by is null or taken_by = auth.uid());
-create policy bring_delete on public.bring_items for delete using (public.is_member(public.plan_group(plan_id)));
+create policy bring_delete on public.bring_items for delete using (public.can_see_plan(plan_id));
 
-create policy expenses_select on public.expenses for select using (public.is_member(public.plan_group(plan_id)));
-create policy expenses_insert on public.expenses for insert with check (paid_by = auth.uid() and public.is_member(public.plan_group(plan_id)));
+create policy expenses_select on public.expenses for select using (public.can_see_plan(plan_id));
+create policy expenses_insert on public.expenses for insert with check (paid_by = auth.uid() and public.can_see_plan(plan_id));
 create policy expenses_delete on public.expenses for delete using (paid_by = auth.uid());
 
-create policy photos_select on public.photos for select using (public.is_member(public.plan_group(plan_id)));
-create policy photos_insert on public.photos for insert with check (user_id = auth.uid() and public.is_member(public.plan_group(plan_id)));
+create policy photos_select on public.photos for select using (public.can_see_plan(plan_id));
+create policy photos_insert on public.photos for insert with check (user_id = auth.uid() and public.can_see_plan(plan_id));
 create policy photos_delete on public.photos for delete using (user_id = auth.uid());
 
 -- Chaud : visible par le groupe jusqu'à la fin du jour prévu
@@ -369,16 +450,32 @@ create policy drinks_select on public.drinks for select using (user_id = auth.ui
 create policy drinks_insert on public.drinks for insert with check (user_id = auth.uid());
 create policy drinks_delete on public.drinks for delete using (user_id = auth.uid());
 
+-- Réglages privés : à moi seul
+create policy settings_all on public.private_settings for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- Amis : je vois mes demandes ; j'envoie en mon nom ; seul le destinataire accepte ; chacun peut retirer
+create policy friends_select on public.friendships for select using (requester = auth.uid() or addressee = auth.uid());
+create policy friends_insert on public.friendships for insert with check (requester = auth.uid() and status = 'pending');
+create policy friends_accept on public.friendships for update using (addressee = auth.uid()) with check (addressee = auth.uid());
+create policy friends_delete on public.friendships for delete using (requester = auth.uid() or addressee = auth.uid());
+
+-- +1 : visibles par ceux qui voient le plan ; on n'invite que ses amis ; l'invité ou l'inviteur peut retirer
+create policy guests_select on public.plan_guests for select using (public.can_see_plan(plan_id));
+create policy guests_insert on public.plan_guests for insert
+  with check (invited_by = auth.uid() and public.can_see_plan(plan_id) and public.are_friends(user_id));
+create policy guests_delete on public.plan_guests for delete
+  using (user_id = auth.uid() or invited_by = auth.uid() or exists (select 1 from plans where id = plan_id and created_by = auth.uid()));
+
 -- =====================================================================
--- Stockage des photos (dossier = id du groupe)
+-- Stockage des photos (dossier = id du groupe / id du plan)
 -- =====================================================================
 insert into storage.buckets (id, name, public) values ('photos', 'photos', false)
   on conflict (id) do nothing;
 
 create policy photos_read on storage.objects for select
-  using (bucket_id = 'photos' and public.is_member(((storage.foldername(name))[1])::uuid));
+  using (bucket_id = 'photos' and public.can_see_plan(((storage.foldername(name))[2])::uuid));
 create policy photos_upload on storage.objects for insert
-  with check (bucket_id = 'photos' and owner = auth.uid() and public.is_member(((storage.foldername(name))[1])::uuid));
+  with check (bucket_id = 'photos' and owner = auth.uid() and public.can_see_plan(((storage.foldername(name))[2])::uuid));
 create policy photos_remove on storage.objects for delete
   using (bucket_id = 'photos' and owner = auth.uid());
 
@@ -388,4 +485,4 @@ create policy photos_remove on storage.objects for delete
 alter publication supabase_realtime add table
   public.plans, public.plan_responses, public.plan_comments, public.rides, public.ride_passengers,
   public.ride_needs, public.bring_items, public.expenses, public.photos, public.chauds,
-  public.chaud_joins, public.group_members;
+  public.chaud_joins, public.group_members, public.friendships, public.plan_guests;

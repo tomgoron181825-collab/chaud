@@ -57,6 +57,70 @@ function GroupList({ ctx, open }) {
         <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="Code d'invitation, ex. 4F9A2C" aria-label="Code d'invitation" maxLength={12} autoCapitalize="characters" />
         <button className="btn small" disabled={busy}>Rejoindre</button>
       </form>
+      <Friends ctx={ctx} />
+    </>
+  )
+}
+
+function Friends({ ctx }) {
+  const { data, me } = ctx
+  const [run, busy] = useAction()
+  const toast = useToast()
+  const [code, setCode] = useState('')
+  const accepted = data.friends.filter((f) => f.status === 'accepted')
+  const incoming = data.friends.filter((f) => f.status === 'pending' && f.incoming)
+  const outgoing = data.friends.filter((f) => f.status === 'pending' && !f.incoming)
+  const pseudo = (id) => data.profiles[id]?.pseudo || 'Quelqu’un'
+
+  const add = async (e) => {
+    e.preventDefault()
+    if (!code.trim()) return
+    const r = await run(() => supabase.rpc('add_friend', { code: code.trim() }), 'Demande envoyée')
+    if (r) { setCode(''); ctx.reload() }
+  }
+  const accept = async (id) => { const r = await run(() => supabase.from('friendships').update({ status: 'accepted' }).eq('requester', id).eq('addressee', me.id), `${pseudo(id)} est ton ami`); if (r) ctx.reload() }
+  const remove = async (id, ask) => {
+    if (ask && !window.confirm(`Retirer ${pseudo(id)} de tes amis ?`)) return
+    const r = await run(() => supabase.from('friendships').delete().or(`and(requester.eq.${me.id},addressee.eq.${id}),and(requester.eq.${id},addressee.eq.${me.id})`))
+    if (r) ctx.reload()
+  }
+  const shareCode = async () => {
+    const text = `Ajoute-moi en ami sur l'app avec mon code : ${me.friend_code}`
+    if (navigator.share) { try { await navigator.share({ text }); return } catch { return } }
+    try { await navigator.clipboard.writeText(me.friend_code); toast('Code copié') } catch { toast(me.friend_code) }
+  }
+
+  return (
+    <>
+      <div className="section-label">Mes amis</div>
+      <div className="card" style={{ marginTop: 0 }}>
+        <div className="row between">
+          <div><div className="meta">Mon code ami</div><div className="big" style={{ fontSize: 24, letterSpacing: '.08em' }}>{me.friend_code}</div></div>
+          <button className="btn small ghost" onClick={shareCode}>Envoyer</button>
+        </div>
+        <p className="note" style={{ marginTop: 6 }}>Tes amis peuvent t'inviter en +1 à leurs soirées, même si tu n'es pas dans leur groupe.</p>
+      </div>
+      <form className="inputrow" onSubmit={add}>
+        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="Code ami d'un pote" aria-label="Code ami" maxLength={12} autoCapitalize="characters" />
+        <button className="btn small" disabled={busy}>Ajouter</button>
+      </form>
+      {incoming.length > 0 && (
+        <ul className="rank" style={{ marginTop: 10 }}>
+          {incoming.map((f) => (
+            <li key={f.id}><span className="row" style={{ gap: 8 }}><Face p={data.profiles[f.id]} /> {pseudo(f.id)} <span className="meta">veut être ton ami</span></span>
+              <span className="row" style={{ gap: 6 }}><button className="btn small" disabled={busy} onClick={() => accept(f.id)}>Accepter</button><button className="link small" onClick={() => remove(f.id)}>Refuser</button></span></li>
+          ))}
+        </ul>
+      )}
+      <ul className="rank" style={{ marginTop: 10 }}>
+        {accepted.map((f) => (
+          <li key={f.id}><span className="row" style={{ gap: 8 }}><Face p={data.profiles[f.id]} /> {pseudo(f.id)}</span><button className="link small" onClick={() => remove(f.id, true)}>Retirer</button></li>
+        ))}
+        {outgoing.map((f) => (
+          <li key={f.id}><span className="row" style={{ gap: 8 }}><Face p={data.profiles[f.id]} /> {pseudo(f.id)} <span className="meta">en attente</span></span><button className="link small" onClick={() => remove(f.id)}>Annuler</button></li>
+        ))}
+        {!data.friends.length && <li><span className="meta">Pas encore d'amis. Envoie ton code ou entre celui d'un pote.</span></li>}
+      </ul>
     </>
   )
 }
@@ -137,6 +201,10 @@ function Members({ ctx, group, members, back }) {
     const r = await run(() => supabase.from('group_members').delete().eq('group_id', group.id).eq('user_id', me.id), 'Tu as quitté le groupe')
     if (r) { back(); ctx.reload() }
   }
+  const befriend = async (uid) => {
+    const r = await run(() => supabase.from('friendships').insert({ addressee: uid }), `Demande envoyée à ${data.profiles[uid]?.pseudo}`)
+    if (r) ctx.reload()
+  }
   const kick = async (uid) => {
     if (!window.confirm(`Retirer ${data.profiles[uid]?.pseudo} du groupe ?`)) return
     const r = await run(() => supabase.from('group_members').delete().eq('group_id', group.id).eq('user_id', uid))
@@ -149,6 +217,7 @@ function Members({ ctx, group, members, back }) {
           <li key={m.user_id}>
             <span className="row" style={{ gap: 8 }}><Face p={data.profiles[m.user_id]} /> {data.profiles[m.user_id]?.pseudo}{m.user_id === me.id ? ' (toi)' : ''}</span>
             <span className="row" style={{ gap: 8 }}>{m.role === 'admin' && <span className="meta">Admin</span>}
+              {m.user_id !== me.id && !data.friends.some((f) => f.id === m.user_id) && <button className="link small" style={{ color: 'var(--accent)' }} onClick={() => befriend(m.user_id)}>+ Ami</button>}
               {group.myRole === 'admin' && m.user_id !== me.id && <button className="link small danger" onClick={() => kick(m.user_id)}>Retirer</button>}</span>
           </li>
         ))}

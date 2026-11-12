@@ -17,22 +17,28 @@ async function q(promise) {
 // Charge tout ce dont l'app a besoin pour les groupes de l'utilisateur.
 // À l'échelle d'une bande de potes, tout recharger reste rapide et simple.
 export async function loadAll(userId) {
-  const memberships = await q(supabase.from('group_members').select('group_id, role, share_conso, groups(*)').eq('user_id', userId))
+  const [memberships, guestRows, friendships] = await Promise.all([
+    q(supabase.from('group_members').select('group_id, role, share_conso, groups(*)').eq('user_id', userId)),
+    q(supabase.from('plan_guests').select('plan_id').eq('user_id', userId)),
+    q(supabase.from('friendships').select('*').or(`requester.eq.${userId},addressee.eq.${userId}`)),
+  ])
   const groups = memberships.map((m) => ({ ...m.groups, myRole: m.role, shareConso: m.share_conso }))
   const groupIds = groups.map((g) => g.id)
-  const empty = { groups, members: {}, profiles: {}, plans: [], responses: {}, comments: {}, rides: {}, needs: {}, bring: {}, expenses: {}, photos: {}, chauds: [], joins: {} }
-  if (!groupIds.length) return empty
+  const guestPlanIds = guestRows.map((r) => r.plan_id)
+  const none = Promise.resolve([])
 
   const since = new Date(Date.now() - 45 * 864e5).toISOString()
-  const [members, plans, chauds] = await Promise.all([
-    q(supabase.from('group_members').select('group_id, user_id, role, share_conso, profiles(id, pseudo, color)').in('group_id', groupIds)),
-    q(supabase.from('plans').select('*').in('group_id', groupIds).or(`starts_at.is.null,starts_at.gte.${since}`).order('starts_at', { ascending: true, nullsFirst: false })),
-    q(supabase.from('chauds').select('*').in('group_id', groupIds).gte('day', todayIso()).order('created_at', { ascending: false })),
+  const [members, groupPlans, guestPlans, chauds] = await Promise.all([
+    groupIds.length ? q(supabase.from('group_members').select('group_id, user_id, role, share_conso, profiles(id, pseudo, color)').in('group_id', groupIds)) : none,
+    groupIds.length ? q(supabase.from('plans').select('*').in('group_id', groupIds).or(`starts_at.is.null,starts_at.gte.${since}`).order('starts_at', { ascending: true, nullsFirst: false })) : none,
+    guestPlanIds.length ? q(supabase.from('plans').select('*').in('id', guestPlanIds).or(`starts_at.is.null,starts_at.gte.${since}`)) : none,
+    groupIds.length ? q(supabase.from('chauds').select('*').in('group_id', groupIds).gte('day', todayIso()).order('created_at', { ascending: false })) : none,
   ])
+  const seen = new Set(groupPlans.map((p) => p.id))
+  const plans = [...groupPlans, ...guestPlans.filter((p) => !seen.has(p.id))]
   const planIds = plans.map((p) => p.id)
   const chaudIds = chauds.map((c) => c.id)
-  const none = Promise.resolve([])
-  const [responses, comments, rides, needs, bring, expenses, photos, joins] = await Promise.all([
+  const [responses, comments, rides, needs, bring, expenses, photos, joins, guests] = await Promise.all([
     planIds.length ? q(supabase.from('plan_responses').select('*').in('plan_id', planIds)) : none,
     planIds.length ? q(supabase.from('plan_comments').select('*').in('plan_id', planIds).order('created_at')) : none,
     planIds.length ? q(supabase.from('rides').select('*, ride_passengers(user_id)').in('plan_id', planIds).order('created_at')) : none,
@@ -41,9 +47,31 @@ export async function loadAll(userId) {
     planIds.length ? q(supabase.from('expenses').select('*').in('plan_id', planIds).order('created_at')) : none,
     planIds.length ? q(supabase.from('photos').select('*').in('plan_id', planIds).order('created_at')) : none,
     chaudIds.length ? q(supabase.from('chaud_joins').select('*').in('chaud_id', chaudIds)) : none,
+    planIds.length ? q(supabase.from('plan_guests').select('*').in('plan_id', planIds)) : none,
   ])
+
+  // Profils : membres de mes groupes, amis, +1 et participants des plans où je suis invité
   const profiles = {}
   members.forEach((m) => { if (m.profiles) profiles[m.user_id] = m.profiles })
+  const wanted = new Set()
+  friendships.forEach((f) => { wanted.add(f.requester); wanted.add(f.addressee) })
+  ;[...responses, ...comments, ...guests, ...photos].forEach((r) => wanted.add(r.user_id))
+  guests.forEach((g) => wanted.add(g.invited_by))
+  rides.forEach((r) => { wanted.add(r.driver_id); r.ride_passengers.forEach((p) => wanted.add(p.user_id)) })
+  expenses.forEach((e) => wanted.add(e.paid_by))
+  plans.forEach((p) => wanted.add(p.created_by))
+  const missing = [...wanted].filter((id) => id && !profiles[id])
+  if (missing.length) {
+    const extra = await q(supabase.from('profiles').select('id, pseudo, color').in('id', missing))
+    extra.forEach((p) => (profiles[p.id] = p))
+  }
+
+  const friends = friendships.map((f) => ({
+    id: f.requester === userId ? f.addressee : f.requester,
+    status: f.status,
+    incoming: f.addressee === userId,
+  }))
+
   return {
     groups,
     members: by(members, 'group_id'),
@@ -56,8 +84,10 @@ export async function loadAll(userId) {
     bring: by(bring, 'plan_id'),
     expenses: by(expenses, 'plan_id'),
     photos: by(photos, 'plan_id'),
+    guests: by(guests, 'plan_id'),
     chauds,
     joins: by(joins, 'chaud_id'),
+    friends,
   }
 }
 

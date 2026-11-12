@@ -34,6 +34,7 @@ export default function PlanCard({ plan, ctx, showGroup }) {
           {!past && (!mine ? <span className="chip todo">À toi de répondre</span> : mine === 'go' ? <span className="chip go">Je viens</span> : mine === 'maybe' ? <span className="chip maybe">Peut-être</span> : <span className="chip">Pas dispo</span>)}
           {!past && (drivers.length ? <span className="chip sam">SAM : {drivers.join(', ')}</span> : plan.type === 'soiree' ? <span className="chip nosam">Pas encore de SAM</span> : null)}
           {showGroup && group && <span className="chip grp">{group.name}</span>}
+          {!group && <span className="chip plus">+1 de {data.profiles[(data.guests[plan.id] || []).find((g) => g.user_id === me.id)?.invited_by]?.pseudo || 'un ami'}</span>}
         </div>
         <div className="row">
           <Faces ids={going} profiles={data.profiles} max={5} />
