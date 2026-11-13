@@ -1,9 +1,13 @@
-// Fonction serveur « notify » : envoie les notifications utiles, et seulement celles-là.
-//   - un pote propose un nouveau plan dans ton groupe
-//   - un pote est chaud (aujourd'hui ou demain)
-//   - quelqu'un dit « Moi aussi » à TON chaud
-//   - un ami t'invite en +1 à un plan
-// Pas de notif pour les messages, les photos, les dépenses, etc.
+// Fonction serveur « notify » : envoie les notifications, selon les choix de chacun (table notif_prefs).
+// Activées par défaut (les utiles) :
+//   - plans    : un pote propose un nouveau plan dans ton groupe
+//   - chauds   : un pote est chaud (aujourd'hui ou demain)
+//   - joins    : quelqu'un dit « Moi aussi » à TON chaud
+//   - guests   : un ami t'invite en +1 à un plan
+// Désactivées par défaut (à activer dans « Mon profil ») :
+//   - responses : quelqu'un répond à un plan que tu as proposé
+//   - messages  : un message sur un plan où tu vas
+//   - photos    : de nouvelles photos d'une soirée où tu étais
 //
 // Secrets à créer dans Supabase > Edge Functions > Secrets : VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY.
 // SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY sont fournis automatiquement par Supabase.
@@ -17,6 +21,18 @@ const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SE
 webpush.setVapidDetails(APP_URL, Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!)
 
 type Msg = { title: string; body: string; url: string; tag: string }
+type Pref = 'plans' | 'chauds' | 'joins' | 'guests' | 'responses' | 'messages' | 'photos'
+const DEFAULTS: Record<Pref, boolean> = { plans: true, chauds: true, joins: true, guests: true, responses: false, messages: false, photos: false }
+
+// Ceux qui participent à un plan : ceux qui viennent (ou peut-être), le créateur et les +1
+async function participants(planId: string, createdBy: string, statuses = ['go', 'maybe']) {
+  const [{ data: r }, { data: g }] = await Promise.all([
+    db.from('plan_responses').select('user_id').eq('plan_id', planId).in('status', statuses),
+    db.from('plan_guests').select('user_id').eq('plan_id', planId),
+  ])
+  return [...new Set([createdBy, ...(r || []).map((x) => x.user_id), ...(g || []).map((x) => x.user_id)])] as string[]
+}
+const cut = (t: string, n = 120) => (t.length > n ? t.slice(0, n - 1) + '…' : t)
 
 const pseudo = async (id: string) =>
   (await db.from('profiles').select('pseudo').eq('id', id).maybeSingle()).data?.pseudo || 'Un pote'
@@ -46,7 +62,7 @@ async function once(key: string) {
   return !error
 }
 
-async function build(table: string, k: Record<string, string>): Promise<{ to: string[]; msg: Msg } | null> {
+async function build(table: string, k: Record<string, string>): Promise<{ to: string[]; msg: Msg; pref: Pref } | null> {
   if (table === 'plans') {
     const { data: p } = await db.from('plans').select('*').eq('id', k.id).maybeSingle()
     // Un plan né d'un « chaud » : ceux qui ont dit oui le savent déjà
@@ -61,6 +77,7 @@ async function build(table: string, k: Record<string, string>): Promise<{ to: st
         url: APP_URL + '?plan=' + p.id,
         tag: 'plan-' + p.id,
       },
+      pref: 'plans',
     }
   }
 
@@ -77,6 +94,7 @@ async function build(table: string, k: Record<string, string>): Promise<{ to: st
         url: APP_URL,
         tag: 'chaud-' + c.id,
       },
+      pref: 'chauds',
     }
   }
 
@@ -94,6 +112,7 @@ async function build(table: string, k: Record<string, string>): Promise<{ to: st
         url: c.plan_id ? APP_URL + '?plan=' + c.plan_id : APP_URL,
         tag: 'chaud-' + c.id,
       },
+      pref: 'joins',
     }
   }
 
@@ -113,9 +132,66 @@ async function build(table: string, k: Record<string, string>): Promise<{ to: st
         url: APP_URL + '?plan=' + p.id,
         tag: 'plan-' + p.id,
       },
+      pref: 'guests',
+    }
+  }
+
+  if (table === 'plan_responses') {
+    if (k.status === 'no') return null
+    const { data: p } = await db.from('plans').select('*').eq('id', k.plan_id).maybeSingle()
+    // Pas pour son propre plan, ni pour les plans nés d'un chaud (les réponses y sont automatiques)
+    if (!p || p.from_chaud || p.created_by === k.user_id) return null
+    if (!(await once(`resp:${k.plan_id}:${k.user_id}:${k.status}`))) return null
+    return {
+      to: [p.created_by],
+      msg: {
+        title: `${await pseudo(k.user_id)} ${k.status === 'go' ? 'vient' : 'viendra peut-être'}`,
+        body: p.title,
+        url: APP_URL + '?plan=' + p.id,
+        tag: 'resp-' + p.id,
+      },
+      pref: 'responses',
+    }
+  }
+
+  if (table === 'plan_comments') {
+    const { data: m } = await db.from('plan_comments').select('*').eq('id', k.id).maybeSingle()
+    if (!m || !(await once('msg:' + m.id))) return null
+    const { data: p } = await db.from('plans').select('*').eq('id', m.plan_id).maybeSingle()
+    if (!p) return null
+    return {
+      to: (await participants(p.id, p.created_by)).filter((id) => id !== m.user_id),
+      msg: { title: `${await pseudo(m.user_id)} · ${p.title}`, body: cut(m.body), url: APP_URL + '?plan=' + p.id, tag: 'msg-' + p.id },
+      pref: 'messages',
+    }
+  }
+
+  if (table === 'photos') {
+    const { data: ph } = await db.from('photos').select('*').eq('id', k.id).maybeSingle()
+    if (!ph) return null
+    // Une seule notif quand quelqu'un ajoute plusieurs photos d'un coup (par heure)
+    const hour = new Date().toISOString().slice(0, 13)
+    if (!(await once(`photo:${ph.plan_id}:${ph.user_id}:${hour}`))) return null
+    const { data: p } = await db.from('plans').select('*').eq('id', ph.plan_id).maybeSingle()
+    if (!p) return null
+    return {
+      to: (await participants(p.id, p.created_by, ['go'])).filter((id) => id !== ph.user_id),
+      msg: { title: `${await pseudo(ph.user_id)} a ajouté des photos`, body: p.title, url: APP_URL + '?plan=' + p.id, tag: 'photos-' + p.id },
+      pref: 'photos',
     }
   }
   return null
+}
+
+// Garde seulement ceux qui ont choisi ce type de notif (sinon le réglage par défaut)
+async function wanted(to: string[], pref: Pref) {
+  if (!to.length) return []
+  const { data } = await db.from('notif_prefs').select('*').in('user_id', to)
+  const byUser = new Map((data || []).map((r) => [r.user_id as string, r]))
+  return to.filter((id) => {
+    const r = byUser.get(id)
+    return r && typeof r[pref] === 'boolean' ? r[pref] : DEFAULTS[pref]
+  })
 }
 
 async function send(to: string[], msg: Msg) {
@@ -145,7 +221,7 @@ Deno.serve(async (req) => {
   try {
     const { table, keys } = await req.json()
     const r = await build(String(table), keys || {})
-    const sent = r ? await send(r.to, r.msg) : 0
+    const sent = r ? await send(await wanted(r.to, r.pref), r.msg) : 0
     return new Response(JSON.stringify({ sent }), { headers: { 'Content-Type': 'application/json' } })
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500 })

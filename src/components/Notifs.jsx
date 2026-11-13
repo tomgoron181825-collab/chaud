@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { pushState, enablePush, disablePush, isIOS } from '../lib/push'
+import { supabase } from '../supabase'
 import { Switch, useToast } from './ui'
 
 const TEXT = {
@@ -9,6 +10,18 @@ const TEXT = {
   denied: "Les notifications sont bloquées pour Chaud. Réactive-les dans les réglages de ton téléphone.",
 }
 const WHAT = "Seulement l'utile : un nouveau plan, un pote chaud, un « Moi aussi » sur ton chaud, une invitation en +1."
+
+// Types de notifs : les 4 premiers sont activés par défaut, les autres au choix
+export const PREFS = [
+  ['plans', 'Nouveau plan dans mes groupes', true],
+  ['chauds', 'Un pote est chaud', true],
+  ['joins', '« Moi aussi » sur mon chaud', true],
+  ['guests', 'Invitation en +1', true],
+  ['responses', 'Réponses à mes plans', false],
+  ['messages', 'Messages des plans où je vais', false],
+  ['photos', "Nouvelles photos d'une soirée où j'étais", false],
+]
+const DEFAULTS = Object.fromEntries(PREFS.map(([k, , d]) => [k, d]))
 
 export function usePush(userId) {
   const [state, setState] = useState(null)
@@ -45,17 +58,37 @@ export function NotifCard({ me }) {
   )
 }
 
-// Réglage dans « Mon profil »
+// Réglage dans « Mon profil » : tout activer ou couper, puis choisir type par type
 export function NotifSetting({ me }) {
   const [state, set] = usePush(me.id)
+  const [prefs, setPrefs] = useState(DEFAULTS)
+  const toast = useToast()
+  useEffect(() => {
+    supabase.from('notif_prefs').select('*').eq('user_id', me.id).maybeSingle()
+      .then(({ data }) => { if (data) setPrefs({ ...DEFAULTS, ...Object.fromEntries(PREFS.map(([k]) => [k, data[k]])) }) }, () => {})
+  }, [])
+  const change = async (k, v) => {
+    const next = { ...prefs, [k]: v }
+    setPrefs(next)
+    const { error } = await supabase.from('notif_prefs').upsert({ user_id: me.id, ...next, updated_at: new Date().toISOString() })
+    if (error) { setPrefs(prefs); toast("Impossible d'enregistrer ce choix pour l'instant") }
+  }
   if (!state) return null
   return (
     <>
       <div className="section-label">Notifications</div>
       {state === 'on' || state === 'off'
-        ? <div className="toggle"><span>Recevoir les notifications</span><Switch checked={state === 'on'} onChange={set} label="Recevoir les notifications" /></div>
+        ? <div className="toggle"><b>Recevoir les notifications</b><Switch checked={state === 'on'} onChange={set} label="Recevoir les notifications" /></div>
         : <p className="meta" style={{ margin: 0 }}>{TEXT[state] || TEXT.install}</p>}
-      <p className="note" style={{ marginTop: 4 }}>{WHAT}</p>
+      {state === 'on' && (
+        <>
+          {PREFS.map(([k, label]) => (
+            <div className="toggle" key={k}><span>{label}</span><Switch checked={!!prefs[k]} onChange={(v) => change(k, v)} label={label} /></div>
+          ))}
+          <p className="note" style={{ marginTop: 4 }}>Par défaut, seulement l'utile. Active les autres si tu veux.</p>
+        </>
+      )}
+      {state === 'off' && <p className="note" style={{ marginTop: 4 }}>{WHAT} Tu pourras ensuite choisir lesquelles.</p>}
     </>
   )
 }
