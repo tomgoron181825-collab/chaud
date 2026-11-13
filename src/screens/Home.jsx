@@ -2,6 +2,7 @@ import { supabase } from '../supabase'
 import { DAYS, MONTHS, isPast, todayIso } from '../lib/format'
 import PlanCard, { visiblePlans, sortPlans } from '../components/PlanCard'
 import { Face, Faces, useAction } from '../components/ui'
+import { NotifCard } from '../components/Notifs'
 
 export default function Home({ ctx }) {
   const { data, me } = ctx
@@ -31,6 +32,7 @@ export default function Home({ ctx }) {
   return (
     <>
       <Header ctx={ctx} today={today} />
+      {data.groups.length > 0 && <NotifCard me={me} />}
       {data.groups.length > 0 && <Chauds ctx={ctx} />}
       {todo.length > 0 && <><div className="section-label">En attente de ta réponse</div>{todo.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} showGroup />)}</>}
       <div className="section-label">Tes prochains plans</div>

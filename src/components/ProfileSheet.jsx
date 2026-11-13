@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../supabase'
 import { COLORS } from '../lib/format'
 import { Sheet, Face, useAction } from './ui'
+import { NotifSetting } from './Notifs'
 
 export default function ProfileSheet({ me, setMe, onClose }) {
   const [run, busy] = useAction()
@@ -29,6 +30,7 @@ export default function ProfileSheet({ me, setMe, onClose }) {
         <div className="row">{COLORS.map((c) => <button type="button" key={c} className="swatch" style={{ background: c }} aria-pressed={c === color} aria-label={'Couleur ' + c} onClick={() => setColor(c)} />)}</div>
         <button className="btn wide" disabled={busy} style={{ marginTop: 14 }}>Enregistrer</button>
       </form>
+      <NotifSetting me={me} />
       <button className="btn ghost wide" style={{ marginTop: 10 }} onClick={() => supabase.auth.signOut()}>Me déconnecter</button>
       <div className="section-label">Supprimer mon compte</div>
       <p className="note" style={{ marginTop: 0 }}>Efface ton profil, ta conso, tes messages et tes photos. Impossible à annuler. Tape SUPPRIMER pour confirmer.</p>

@@ -12,6 +12,7 @@ import PlanSheet from './components/PlanSheet'
 import NewPlanSheet from './components/NewPlanSheet'
 import NewChaudSheet from './components/NewChaudSheet'
 import ProfileSheet from './components/ProfileSheet'
+import { isStandalone, refreshPush } from './lib/push'
 
 const TABS = [['home', 'À venir'], ['groups', 'Groupes'], ['conso', 'Conso'], ['bilan', 'Bilan']]
 
@@ -21,6 +22,9 @@ if (params.get('join')) {
   try { sessionStorage.setItem('pendingJoin', params.get('join')) } catch {}
   history.replaceState(null, '', location.pathname)
 }
+// Plan à ouvrir directement (?plan=ID), par exemple en touchant une notification
+let pendingPlan = params.get('plan')
+if (pendingPlan) history.replaceState(null, '', location.pathname)
 
 export default function App() {
   const [session, setSession] = useState(undefined)
@@ -55,6 +59,22 @@ function Main({ me, setMe }) {
   const [newChaud, setNewChaud] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const toast = useToast()
+
+  // Statistiques de base (dernière visite, app installée) et abonnement aux notifs à jour
+  useEffect(() => {
+    const up = { last_seen_at: new Date().toISOString() }
+    if (isStandalone()) up.installed = true
+    supabase.from('profiles').update(up).eq('id', me.id).then(() => {}, () => {})
+    refreshPush(me.id)
+  }, [])
+
+  // Ouvrir le plan d'une notification
+  useEffect(() => {
+    const open = () => { const id = new URLSearchParams(location.search).get('plan'); if (id) { setTab('home'); setPlanId(id); history.replaceState(null, '', location.pathname) } }
+    if (pendingPlan) { setPlanId(pendingPlan); pendingPlan = null }
+    window.addEventListener('popstate', open)
+    return () => window.removeEventListener('popstate', open)
+  }, [])
 
   // Rejoindre un groupe via un lien d'invitation
   useEffect(() => {
