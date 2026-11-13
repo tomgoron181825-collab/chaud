@@ -3,12 +3,15 @@ import { supabase } from '../supabase'
 import { COLORS } from '../lib/format'
 import { Sheet, Face, useAction } from './ui'
 import { NotifSetting } from './Notifs'
+import StatsSheet, { useIsAdmin } from './Stats'
 
 export default function ProfileSheet({ me, setMe, onClose }) {
   const [run, busy] = useAction()
   const [pseudo, setPseudo] = useState(me.pseudo)
   const [color, setColor] = useState(me.color)
   const [confirmDelete, setConfirmDelete] = useState('')
+  const admin = useIsAdmin()
+  const [stats, setStats] = useState(false)
 
   const save = async (e) => {
     e.preventDefault()
@@ -20,6 +23,7 @@ export default function ProfileSheet({ me, setMe, onClose }) {
     if (r) await supabase.auth.signOut()
   }
 
+  if (stats) return <StatsSheet onClose={() => setStats(false)} />
   return (
     <Sheet onClose={onClose}>
       <div className="row" style={{ gap: 12 }}><Face p={{ pseudo, color }} size={52} /><h3 className="sheet-title" style={{ margin: 0 }}>Mon profil</h3></div>
@@ -31,6 +35,7 @@ export default function ProfileSheet({ me, setMe, onClose }) {
         <button className="btn wide" disabled={busy} style={{ marginTop: 14 }}>Enregistrer</button>
       </form>
       <NotifSetting me={me} />
+      {admin && <button className="btn wide" style={{ marginTop: 18 }} onClick={() => setStats(true)}>Voir les stats de l'app</button>}
       <button className="btn ghost wide" style={{ marginTop: 10 }} onClick={() => supabase.auth.signOut()}>Me déconnecter</button>
       <div className="section-label">Supprimer mon compte</div>
       <p className="note" style={{ marginTop: 0 }}>Efface ton profil, ta conso, tes messages et tes photos. Impossible à annuler. Tape SUPPRIMER pour confirmer.</p>
