@@ -4,7 +4,7 @@
 //   - chauds   : un pote est chaud (aujourd'hui ou demain)
 //   - joins    : quelqu'un dit « Moi aussi » à TON chaud
 //   - guests   : un ami t'invite en +1 à un plan
-//   - game     : rappel du jeu de la semaine à 9 h, seulement si tu n'as pas encore voté
+//   - game     : question du jour à 9 h, seulement si tu n'as pas encore répondu
 // Désactivées par défaut (à activer dans « Mon profil ») :
 //   - responses : quelqu'un répond à un plan que tu as proposé
 //   - messages  : un message sur un plan où tu vas
@@ -63,7 +63,7 @@ async function once(key: string) {
   return !error
 }
 
-// Jeu de la semaine : mêmes questions que dans l'app (src/components/Game.jsx)
+// Question du jour : mêmes questions que dans l'app (src/components/Game.jsx)
 const QUESTIONS = [
   "d'arriver en retard à sa propre soirée",
   'de proposer un plan à 2 h du matin',
@@ -95,23 +95,51 @@ const QUESTIONS = [
   'de se vexer à un jeu de société',
   'de faire le SAM sans qu\'on lui demande',
   'de raconter la même anecdote pour la dixième fois',
+  "de pleurer devant un dessin animé",
+  'de se faire tatouer sur un coup de tête',
+  "d'ouvrir un resto un jour",
+  'de finir dans une émission de télé-réalité',
+  "d'avoir le plus d'applis de rencontre",
+  "de se lever à 5 h pour aller courir",
+  "d'adopter un chien sans prévenir personne",
+  'de se perdre dans un aéroport',
+  "d'envoyer un message à la mauvaise personne",
+  'de partir vivre à l\'étranger',
+  "d'oublier ses clés en partant",
+  'de lancer un débat à 3 h du matin',
+  "de commander à manger à minuit",
+  'de gagner à un quiz de culture G',
+  "d'être en retard à son propre mariage",
+  'de dépenser tout son salaire en un week-end',
+  'de faire la fête jusqu\'au lever du soleil',
+  "d'avoir un fou rire au mauvais moment",
+  'de se faire passer pour quelqu\'un d\'autre au téléphone',
+  'de devenir prof',
+  'de garder ses tickets de concert pendant 10 ans',
+  "de s'inscrire à la salle et de ne jamais y aller",
+  'de mettre trois tenues avant de sortir',
+  'de connaître tous les potins',
+  'de chanter sous la douche à fond',
+  'de réussir dans la vie sans jamais réviser',
+  "d'oublier le prénom de quelqu'un juste après l'avoir entendu",
+  'de rester ami avec tous ses ex',
+  'de proposer un jeu de société à chaque soirée',
+  'de faire un road trip sans rien prévoir',
 ]
-const questionOf = (week: string) => {
-  const n = Math.round(Date.parse(week + 'T12:00:00Z') / (7 * 864e5))
+const questionOf = (day: string) => {
+  const n = Math.round(Date.parse(day + 'T12:00:00Z') / 864e5)
   return QUESTIONS[((n % QUESTIONS.length) + QUESTIONS.length) % QUESTIONS.length]
 }
 
 async function build(table: string, k: Record<string, string>): Promise<{ to: string[]; msg: Msg; pref: Pref } | null> {
   // Rappel du jeu, lancé chaque matin par la base (pg_cron) : seulement à 9 h heure de Paris,
-  // une fois par jour, et seulement pour ceux qui n'ont pas encore voté dans un de leurs groupes
+  // une fois par jour, et seulement pour ceux qui n'ont pas encore répondu dans un de leurs groupes
   if (table === 'game') {
     const paris = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
     if (paris.getHours() !== 9) return null
     const today = `${paris.getFullYear()}-${String(paris.getMonth() + 1).padStart(2, '0')}-${String(paris.getDate()).padStart(2, '0')}`
     if (!(await once('game:' + today))) return null
-    const m = new Date(today + 'T12:00:00Z')
-    m.setUTCDate(m.getUTCDate() - ((m.getUTCDay() + 6) % 7))
-    const week = m.toISOString().slice(0, 10)
+    const week = today // une question par jour : la « semaine » du vote est le jour même
     const [{ data: mem }, { data: votes }] = await Promise.all([
       db.from('group_members').select('group_id, user_id'),
       db.from('game_votes').select('group_id, voter').eq('week', week),
@@ -120,11 +148,10 @@ async function build(table: string, k: Record<string, string>): Promise<{ to: st
     for (const r of mem || []) size.set(r.group_id, (size.get(r.group_id) || 0) + 1)
     const voted = new Set((votes || []).map((v) => v.group_id + ':' + v.voter))
     const to = [...new Set((mem || []).filter((r) => (size.get(r.group_id) || 0) >= 2 && !voted.has(r.group_id + ':' + r.user_id)).map((r) => r.user_id as string))]
-    const last = paris.getDay() === 0
     return {
       to,
       msg: {
-        title: last ? 'Dernier jour pour voter !' : 'Jeu de la semaine',
+        title: 'Question du jour',
         body: `Qui de nous est le plus susceptible ${questionOf(week)} ?`,
         url: APP_URL,
         tag: 'game-' + week,

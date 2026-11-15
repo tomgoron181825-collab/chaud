@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { Face, useToast } from './ui'
 
-// Jeu de la semaine « Qui de nous ? » : une question par semaine (la même pour tous les groupes),
+// Question du jour « Qui de nous ? » : une question par jour (la même pour tous les groupes),
 // chacun vote pour un membre. Votes secrets, on ne voit que les totaux.
 export const QUESTIONS = [
   "d'arriver en retard à sa propre soirée",
@@ -35,17 +35,47 @@ export const QUESTIONS = [
   'de se vexer à un jeu de société',
   'de faire le SAM sans qu\'on lui demande',
   'de raconter la même anecdote pour la dixième fois',
+  "de pleurer devant un dessin animé",
+  'de se faire tatouer sur un coup de tête',
+  "d'ouvrir un resto un jour",
+  'de finir dans une émission de télé-réalité',
+  "d'avoir le plus d'applis de rencontre",
+  "de se lever à 5 h pour aller courir",
+  "d'adopter un chien sans prévenir personne",
+  'de se perdre dans un aéroport',
+  "d'envoyer un message à la mauvaise personne",
+  'de partir vivre à l\'étranger',
+  "d'oublier ses clés en partant",
+  'de lancer un débat à 3 h du matin',
+  "de commander à manger à minuit",
+  'de gagner à un quiz de culture G',
+  "d'être en retard à son propre mariage",
+  'de dépenser tout son salaire en un week-end',
+  'de faire la fête jusqu\'au lever du soleil',
+  "d'avoir un fou rire au mauvais moment",
+  'de se faire passer pour quelqu\'un d\'autre au téléphone',
+  'de devenir prof',
+  'de garder ses tickets de concert pendant 10 ans',
+  "de s'inscrire à la salle et de ne jamais y aller",
+  'de mettre trois tenues avant de sortir',
+  'de connaître tous les potins',
+  'de chanter sous la douche à fond',
+  'de réussir dans la vie sans jamais réviser',
+  "d'oublier le prénom de quelqu'un juste après l'avoir entendu",
+  'de rester ami avec tous ses ex',
+  'de proposer un jeu de société à chaque soirée',
+  'de faire un road trip sans rien prévoir',
 ]
 
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-// Lundi de la semaine (décalage en semaines possible)
+// Le jour (aujourd'hui, ou décalé : -1 = hier)
 export function weekOf(shift = 0) {
   const d = new Date(); d.setHours(12, 0, 0, 0)
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + shift * 7)
+  d.setDate(d.getDate() + shift)
   return iso(d)
 }
-export function questionOf(week) {
-  const n = Math.round(Date.parse(week + 'T12:00:00Z') / (7 * 864e5))
+export function questionOf(day) {
+  const n = Math.round(Date.parse(day + 'T12:00:00Z') / 864e5)
   return QUESTIONS[((n % QUESTIONS.length) + QUESTIONS.length) % QUESTIONS.length]
 }
 
@@ -90,9 +120,9 @@ export default function Game({ ctx, group, members }) {
   return (
     <>
       <div className="wrapped small game">
-        <div className="k">Jeu de la semaine · Qui de nous…</div>
+        <div className="k">Question du jour · Qui de nous…</div>
         <div className="game-q">…est le plus susceptible {questionOf(week)} ?</div>
-        <div className="wrapped-sub">{now.voters}/{members.length} ont voté · nouvelle question lundi</div>
+        <div className="wrapped-sub">{now.voters}/{members.length} ont voté · nouvelle question demain</div>
       </div>
       {!voted ? (
         <>
@@ -121,7 +151,7 @@ export default function Game({ ctx, group, members }) {
       )}
       {w && (
         <div className="card">
-          <div className="meta">La semaine dernière, le plus susceptible {questionOf(last)} :</div>
+          <div className="meta">Hier, le plus susceptible {questionOf(last)} :</div>
           <div className="row" style={{ gap: 8, marginTop: 6 }}>{w.ids.map((id) => <span key={id} className="row" style={{ gap: 6 }}><Face p={data.profiles[id]} /> <b>{name(id)}</b></span>)}<span className="meta">{w.n} vote{w.n > 1 ? 's' : ''}</span></div>
         </div>
       )}
@@ -129,7 +159,7 @@ export default function Game({ ctx, group, members }) {
   )
 }
 
-// Petite carte sur l'accueil tant que tu n'as pas voté dans un de tes groupes
+// Petite carte sur l'accueil tant que tu n'as pas répondu dans un de tes groupes
 export function GameCard({ ctx }) {
   const { data } = ctx
   const week = weekOf()
@@ -145,7 +175,7 @@ export function GameCard({ ctx }) {
   const g = data.groups.find((x) => x.id === todo)
   return (
     <button className="card game-card" onClick={() => ctx.openGroup(todo, 'jeu')}>
-      <div className="k">Jeu de la semaine · {g?.name}</div>
+      <div className="k">Question du jour · {g?.name}</div>
       <b>Qui de nous est le plus susceptible {questionOf(week)} ?</b>
       <span className="chip todo" style={{ alignSelf: 'flex-start', marginTop: 8 }}>Voter</span>
     </button>

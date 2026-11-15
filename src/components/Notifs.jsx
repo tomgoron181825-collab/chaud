@@ -17,7 +17,7 @@ export const PREFS = [
   ['chauds', 'Un pote est chaud', true],
   ['joins', '« Moi aussi » sur mon chaud', true],
   ['guests', 'Invitation en +1', true],
-  ['game', 'Rappel du jeu de la semaine (9 h, si pas encore voté)', true],
+  ['game', 'Question du jour (rappel à 9 h si pas encore répondu)', true],
   ['responses', 'Réponses à mes plans', false],
   ['messages', 'Messages des plans où je vais', false],
 ]
