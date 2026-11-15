@@ -137,10 +137,8 @@ function Group({ ctx, group, back }) {
       <button className="link strong" onClick={back} style={{ marginBottom: 10 }}>‹ Groupes</button>
       <div className="top">
         <div className="row nowrap" style={{ gap: 10 }}>
-          {group.myRole === 'admin'
-            ? <button className="avatar-btn avatar-edit" style={{ borderRadius: 14 }} onClick={() => setEditing(true)} aria-label="Modifier le groupe"><GroupAvatar g={group} /><span className="avatar-cam" aria-hidden="true">✎</span></button>
-            : <GroupAvatar g={group} />}
-          <div className="plan-body"><h2 style={{ fontSize: 22 }}>{group.name}</h2><span className="sub">{members.length} membre{members.length > 1 ? 's' : ''}{group.myRole === 'admin' && <> · <button className="link small" style={{ padding: 0, color: 'var(--accent)' }} onClick={() => setEditing(true)}>Modifier</button></>}</span></div>
+          <button className="avatar-btn avatar-edit" style={{ borderRadius: 14 }} onClick={() => setEditing(true)} aria-label="Modifier le groupe"><GroupAvatar g={group} /><span className="avatar-cam" aria-hidden="true">✎</span></button>
+          <div className="plan-body"><h2 style={{ fontSize: 22 }}>{group.name}</h2><span className="sub">{members.length} membre{members.length > 1 ? 's' : ''} · <button className="link small" style={{ padding: 0, color: 'var(--accent)' }} onClick={() => setEditing(true)}>Modifier</button></span></div>
         </div>
         <button className="round" onClick={() => ctx.newPlan(group.id)} aria-label="Proposer un plan">+</button>
       </div>
@@ -162,7 +160,7 @@ export function GroupAvatar({ g }) {
   return <span className="gav" style={{ background: g.color }}>{g.name[0]?.toUpperCase()}</span>
 }
 
-// Nom et photo du groupe : réservé aux admins (le créateur l'est d'office)
+// Nom et photo du groupe : n'importe quel membre peut les changer
 function EditGroup({ ctx, group, onClose }) {
   const { me } = ctx
   const [run, busy] = useAction()
@@ -192,8 +190,8 @@ function EditGroup({ ctx, group, onClose }) {
   const save = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
-    const r = await run(() => supabase.from('groups').update(photo === (group.avatar_url || null) ? { name: name.trim() } : { name: name.trim(), avatar_url: photo }).eq('id', group.id).select().single(), 'Groupe modifié')
-    if (r?.data) { if (group.avatar_url && group.avatar_url !== photo) removeOld(group.avatar_url); await ctx.reload(); onClose() }
+    const r = await run(() => supabase.rpc('update_group', { g: group.id, new_name: name.trim(), new_avatar: photo }), 'Groupe modifié')
+    if (r) { if (group.avatar_url && group.avatar_url !== photo) removeOld(group.avatar_url); await ctx.reload(); onClose() }
   }
   return (
     <Sheet onClose={onClose}>
