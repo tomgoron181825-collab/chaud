@@ -50,6 +50,12 @@ export async function loadAll(userId) {
     planIds.length ? q(supabase.from('plan_guests').select('*').in('plan_id', planIds)) : none,
   ])
 
+  // Sondages de dates (si la table n'existe pas encore, on fait sans)
+  const dateOptions = planIds.length
+    ? await supabase.from('plan_date_options').select('*, plan_date_votes(user_id)').in('plan_id', planIds).order('starts_at')
+        .then((r) => (r.error ? [] : r.data || []), () => [])
+    : []
+
   // Profils : membres de mes groupes, amis, +1 et participants des plans où je suis invité
   const profiles = {}
   members.forEach((m) => { if (m.profiles) profiles[m.user_id] = m.profiles })
@@ -84,6 +90,7 @@ export async function loadAll(userId) {
     bring: by(bring, 'plan_id'),
     expenses: by(expenses, 'plan_id'),
     guests: by(guests, 'plan_id'),
+    dates: by(dateOptions, 'plan_id'),
     chauds,
     joins: by(joins, 'chaud_id'),
     friends,

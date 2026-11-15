@@ -53,6 +53,8 @@ export default function PlanSheet({ ctx, plan, onClose }) {
       {plan.description && <p className="desc">{plan.description}</p>}
       <div className="meta" style={{ marginTop: 6 }}>Proposé par {name(plan.created_by)}</div>
 
+      {!plan.starts_at && (data.dates?.[plan.id] || []).length > 0 && <DatePoll ctx={ctx} plan={plan} />}
+
       {!past && (
         <>
           <div className="rsvp">
@@ -285,6 +287,52 @@ function Comments({ ctx, plan, run, after }) {
       ))}
       {!list.length && <p className="note" style={{ marginTop: 0 }}>Pas encore de message.</p>}
       <form className="inputrow" onSubmit={send}><input value={body} onChange={(e) => setBody(e.target.value)} placeholder="Écrire sur ce plan…" aria-label="Message" maxLength={1000} /><button className="btn small">Envoyer</button></form>
+    </>
+  )
+}
+
+// Sondage de dates : chacun coche ses dispos, le créateur choisit la date finale
+function DatePoll({ ctx, plan }) {
+  const { data, me } = ctx
+  const [run, busy] = useAction()
+  const opts = data.dates[plan.id] || []
+  const voters = (o) => (o.plan_date_votes || []).map((v) => v.user_id)
+  const max = Math.max(1, ...opts.map((o) => voters(o).length))
+  const best = Math.max(...opts.map((o) => voters(o).length))
+  const toggle = async (o) => {
+    const on = voters(o).includes(me.id)
+    const r = await run(() => on
+      ? supabase.from('plan_date_votes').delete().eq('option_id', o.id).eq('user_id', me.id)
+      : supabase.from('plan_date_votes').insert({ option_id: o.id }))
+    if (r) ctx.reload()
+  }
+  const choose = async (o) => {
+    const r = await run(() => supabase.from('plans').update({ starts_at: o.starts_at }).eq('id', plan.id), 'Date fixée, tout le monde la voit')
+    if (r) ctx.reload()
+  }
+  return (
+    <>
+      <div className="section-label">Sondage de date</div>
+      <p className="meta" style={{ marginTop: -4 }}>Coche toutes les dates où tu es dispo.</p>
+      <div className="poll">
+        {opts.map((o) => {
+          const v = voters(o)
+          const on = v.includes(me.id)
+          return (
+            <div key={o.id} className="poll-row">
+              <button className={'poll-opt' + (on ? ' on' : '')} disabled={busy} onClick={() => toggle(o)} aria-pressed={on}>
+                <i style={{ width: (v.length / max) * 100 + '%' }} />
+                <span className="poll-check">{on ? '✓' : ''}</span>
+                <span className="poll-label">{when(o.starts_at)}{v.length > 0 && v.length === best && opts.length > 1 ? ' ★' : ''}</span>
+                <span className="poll-n">{v.length}</span>
+              </button>
+              {v.length > 0 && <div className="poll-faces"><Faces ids={v} profiles={data.profiles} max={8} /></div>}
+              {plan.created_by === me.id && <button className="link small poll-choose" disabled={busy} onClick={() => choose(o)}>Choisir cette date</button>}
+            </div>
+          )
+        })}
+      </div>
+      {plan.created_by === me.id && <p className="note">Quand tout le monde a voté, choisis la date : elle devient la date du plan.</p>}
     </>
   )
 }
