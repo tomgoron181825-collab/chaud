@@ -30,7 +30,7 @@ export async function loadAll(userId) {
 
   const since = new Date(Date.now() - 45 * 864e5).toISOString()
   const [members, groupPlans, guestPlans, chauds] = await Promise.all([
-    groupIds.length ? q(supabase.from('group_members').select('group_id, user_id, role, share_conso, profiles(id, pseudo, color, avatar_url)').in('group_id', groupIds)) : none,
+    groupIds.length ? q(supabase.from('group_members').select('group_id, user_id, role, share_conso, profiles(id, pseudo, color, avatar_url, share_conso_friends)').in('group_id', groupIds)) : none,
     groupIds.length ? q(supabase.from('plans').select('*').in('group_id', groupIds).or(`starts_at.is.null,starts_at.gte.${since}`).order('starts_at', { ascending: true, nullsFirst: false })) : none,
     guestPlanIds.length ? q(supabase.from('plans').select('*').in('id', guestPlanIds).or(`starts_at.is.null,starts_at.gte.${since}`)) : none,
     groupIds.length ? q(supabase.from('chauds').select('*').in('group_id', groupIds).gte('day', todayIso()).order('created_at', { ascending: false })) : none,
@@ -62,7 +62,7 @@ export async function loadAll(userId) {
   plans.forEach((p) => wanted.add(p.created_by))
   const missing = [...wanted].filter((id) => id && !profiles[id])
   if (missing.length) {
-    const extra = await q(supabase.from('profiles').select('id, pseudo, color, avatar_url').in('id', missing))
+    const extra = await q(supabase.from('profiles').select('id, pseudo, color, avatar_url, share_conso_friends').in('id', missing))
     extra.forEach((p) => (profiles[p.id] = p))
   }
 

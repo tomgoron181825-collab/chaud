@@ -127,7 +127,7 @@ function Main({ me, setMe }) {
   if (!data) return error ? <div className="center"><p className="error">{error}</p><button className="btn" onClick={reload}>Réessayer</button></div> : <Splash />
 
   const ctx = {
-    me, data, reload,
+    me, setMe, data, reload,
     openPlan: setPlanId,
     newPlan: (groupId) => setNewPlan({ groupId: groupId || groupView || data.groups[0]?.id }),
     newChaud: () => setNewChaud(true),

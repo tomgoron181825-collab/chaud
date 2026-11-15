@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { DRINKS, PRESET_DEFAULTS, units, fmtU } from '../lib/format'
-import { DrinkIcon, Sheet, Switch, useAction, useToast } from '../components/ui'
+import { DrinkIcon, Face, Sheet, Switch, useAction, useToast } from '../components/ui'
 import { estimateBac, fmtBac, preventionMessage, thresholdToast } from '../lib/prevention'
 import { fmtTime } from '../lib/format'
 import { cacheGet, cacheSet, queue, queueAdd, queueDel, flushDrinks, newId, withTimeout } from '../lib/offline'
@@ -81,6 +81,10 @@ export default function Conso({ ctx }) {
     flushDrinks(me.id)
   }
   const delPreset = async (id) => { const r = await run(() => supabase.from('drink_presets').delete().eq('id', id)); if (r) load() }
+  const setShareFriends = async (v) => {
+    const r = await run(() => supabase.from('profiles').update({ share_conso_friends: v }).eq('id', me.id).select().single())
+    if (r?.data) ctx.setMe(r.data)
+  }
   const setShare = async (gid, v) => { const r = await run(() => supabase.from('group_members').update({ share_conso: v }).eq('group_id', gid).eq('user_id', me.id)); if (r) ctx.reload() }
 
   const alc = tonight.reduce((a, d) => a + Number(d.units), 0)
@@ -145,12 +149,46 @@ export default function Conso({ ctx }) {
         {data.groups.map((g) => (
           <div className="toggle" key={g.id}><span>{g.name}</span><Switch checked={!!g.shareConso} onChange={(v) => setShare(g.id, v)} label={'Partager avec ' + g.name} /></div>
         ))}
-        {!data.groups.length && <p className="meta">Rejoins un groupe pour pouvoir partager.</p>}
-        <p className="note" style={{ marginTop: 4 }}>Privé par défaut. Tu choisis groupe par groupe.</p>
+        <div className="toggle"><span>Mes amis</span><Switch checked={!!me.share_conso_friends} onChange={setShareFriends} label="Partager avec mes amis" /></div>
+        <p className="note" style={{ marginTop: 4 }}>Privé par défaut. Tu choisis groupe par groupe, et pour tes amis.</p>
       </div>
+
+      <FriendsConso ctx={ctx} />
       <p className="note">Repères de Santé publique France : pas plus de 10 verres standard par semaine, pas plus de 2 par jour, et pas tous les jours. Besoin d'en parler : Alcool Info Service, 0 980 980 930 (gratuit, 7j/7).</p>
 
       {adding && <NewPreset onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load() }} />}
+    </>
+  )
+}
+
+// Conso du mois des amis qui ont choisi de la partager avec leurs amis
+function FriendsConso({ ctx }) {
+  const { data } = ctx
+  const ids = data.friends.filter((f) => f.status === 'accepted' && data.profiles[f.id]?.share_conso_friends).map((f) => f.id)
+  const [rows, setRows] = useState(null)
+  useEffect(() => {
+    if (!ids.length) return setRows([])
+    const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0)
+    const night = nightStart().toISOString()
+    supabase.from('drinks').select('user_id, kind, units, drunk_at').in('user_id', ids).gte('drunk_at', start.toISOString())
+      .then(({ data: d }) => setRows((d || []).map((r) => ({ ...r, tonight: r.drunk_at >= night }))), () => setRows([]))
+  }, [ids.join()])
+  if (!data.friends.some((f) => f.status === 'accepted')) return null
+  const sum = (l) => l.reduce((a, r) => a + Number(r.units), 0)
+  return (
+    <>
+      <div className="section-label">La conso de mes amis</div>
+      {rows === null ? <div className="empty">Chargement…</div> : (
+        <ul className="rank">
+          {ids.map((id) => {
+            const mine = rows.filter((r) => r.user_id === id)
+            const t = mine.filter((r) => r.tonight)
+            return <li key={id}><span className="row" style={{ gap: 8 }}><Face p={data.profiles[id]} /> {data.profiles[id]?.pseudo}</span>
+              <span className="meta">{t.length ? `ce soir ${fmtU(sum(t))} std · ` : ''}ce mois {fmtU(sum(mine))} std · {mine.filter((r) => r.kind === 'eau').length} d'eau</span></li>
+          })}
+          {!ids.length && <li><span className="meta">Aucun de tes amis ne partage sa conso pour l'instant.</span></li>}
+        </ul>
+      )}
     </>
   )
 }
