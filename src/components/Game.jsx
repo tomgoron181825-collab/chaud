@@ -94,13 +94,15 @@ async function results(groupId, week) {
 export default function Game({ ctx, group, members }) {
   const { data } = ctx
   const toast = useToast()
-  const week = weekOf(), last = weekOf(-1)
+  const week = weekOf()
+  // Historique : les 7 derniers jours, à partir du lancement de la question du jour (15 nov. 2026)
+  const past = [1, 2, 3, 4, 5, 6, 7].map((i) => weekOf(-i)).filter((d) => d >= '2026-11-15')
   const [now, setNow] = useState(null)
-  const [prev, setPrev] = useState(null)
+  const [hist, setHist] = useState([])
   const [changing, setChanging] = useState(false)
   const [err, setErr] = useState(false)
-  const load = () => Promise.all([results(group.id, week), results(group.id, last)])
-    .then(([a, b]) => { setNow(a); setPrev(b); setErr(false) }, () => setErr(true))
+  const load = () => Promise.all([results(group.id, week), ...past.map((d) => results(group.id, d).catch(() => null))])
+    .then(([a, ...h]) => { setNow(a); setHist(h.map((r, i) => ({ day: past[i], r }))); setErr(false) }, () => setErr(true))
   useEffect(() => { load() }, [group.id])
 
   const vote = async (uid) => {
@@ -115,7 +117,6 @@ export default function Game({ ctx, group, members }) {
     const max = Math.max(...e.map(([, n]) => n))
     return { ids: e.filter(([, n]) => n === max).map(([id]) => id), n: max }
   }
-  const w = winners(prev)
 
   if (err) return <div className="empty">Le jeu arrive bientôt.</div>
   if (!now) return <div className="empty">Chargement…</div>
@@ -155,11 +156,26 @@ export default function Game({ ctx, group, members }) {
           <p className="note">Tu as voté pour {name(now.mine)}. <button className="link small" style={{ padding: 0 }} onClick={() => setChanging(true)}>Changer mon vote</button></p>
         </>
       )}
-      {w && (
-        <div className="card">
-          <div className="meta">Hier, le plus susceptible {questionOf(last)} :</div>
-          <div className="row" style={{ gap: 8, marginTop: 6 }}>{w.ids.map((id) => <span key={id} className="row" style={{ gap: 6 }}><Face p={data.profiles[id]} /> <b>{name(id)}</b></span>)}<span className="meta">{w.n} vote{w.n > 1 ? 's' : ''}</span></div>
-        </div>
+      {hist.length > 0 && (
+        <>
+          <div className="section-label">Les jours d'avant</div>
+          <ul className="rank">
+            {hist.map(({ day, r }, i) => {
+              const w = winners(r)
+              const label = i === 0 && day === weekOf(-1) ? 'Hier' : new Date(day + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' })
+              return (
+                <li key={day} style={{ display: 'block' }}>
+                  <div className="meta">{label[0].toUpperCase() + label.slice(1)}</div>
+                  <div>Le plus susceptible {questionOf(day)} :</div>
+                  <div className="row" style={{ gap: 8, marginTop: 4 }}>
+                    {w ? <>{w.ids.map((id) => <span key={id} className="row" style={{ gap: 6 }}><Face p={data.profiles[id]} /> <b>{name(id)}</b></span>)}<span className="meta">{w.n} vote{w.n > 1 ? 's' : ''}</span></>
+                      : <span className="meta">Personne n'a voté</span>}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </>
       )}
     </>
   )
