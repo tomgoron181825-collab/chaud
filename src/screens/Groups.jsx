@@ -286,6 +286,7 @@ function Members({ ctx, group, members, back }) {
           </li>
         ))}
       </ul>
+      <AddFriends ctx={ctx} group={group} members={members} />
       <div className="section-label">Inviter des potes</div>
       <div className="card">
         <div className="meta">Code du groupe</div>
@@ -293,6 +294,30 @@ function Members({ ctx, group, members, back }) {
         <button className="btn small" style={{ marginTop: 10 }} onClick={share}>Envoyer le lien d'invitation</button>
       </div>
       <button className="link danger" style={{ marginTop: 18 }} onClick={leave}>Quitter le groupe</button>
+    </>
+  )
+}
+
+// Ajouter directement un de mes amis dans le groupe
+function AddFriends({ ctx, group, members }) {
+  const { data } = ctx
+  const [run, busy] = useAction()
+  const inGroup = new Set(members.map((m) => m.user_id))
+  const list = data.friends.filter((f) => f.status === 'accepted' && !inGroup.has(f.id))
+  if (!list.length) return null
+  const add = async (id) => {
+    const r = await run(() => supabase.rpc('add_friend_to_group', { g: group.id, friend: id }), `${data.profiles[id]?.pseudo || 'Ton ami'} a rejoint le groupe`)
+    if (r) ctx.reload()
+  }
+  return (
+    <>
+      <div className="section-label">Ajouter mes amis</div>
+      <ul className="rank">
+        {list.map((f) => (
+          <li key={f.id}><span className="row" style={{ gap: 8 }}><Face p={data.profiles[f.id]} /> {data.profiles[f.id]?.pseudo}</span>
+            <button className="btn small" disabled={busy} onClick={() => add(f.id)}>Ajouter</button></li>
+        ))}
+      </ul>
     </>
   )
 }
