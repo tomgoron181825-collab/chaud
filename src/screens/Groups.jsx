@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
-import { COLORS, isPast, fmtDay, fmtU } from '../lib/format'
+import { COLORS, isPast, fmtDay, fmtU, squareImage } from '../lib/format'
 import { loadYearStats } from '../data'
 import PlanCard, { visiblePlans, sortPlans } from '../components/PlanCard'
-import { Face, useAction, useToast } from '../components/ui'
+import { Face, Sheet, useAction, useToast } from '../components/ui'
 import { shareInvite } from '../lib/invite'
 import Game from '../components/Game'
 
@@ -52,7 +52,7 @@ function GroupList({ ctx, open }) {
         const m = (data.members[g.id] || []).length
         return (
           <button className="group" key={g.id} onClick={() => open(g.id)}>
-            <span className="gav" style={{ background: g.color }}>{g.name[0]?.toUpperCase()}</span>
+            <GroupAvatar g={g} />
             <div className="plan-body"><b>{g.name}</b><span className="meta">{m} membre{m > 1 ? 's' : ''} · {n} plan{n > 1 ? 's' : ''} à venir</span></div>
           </button>
         )
@@ -127,6 +127,7 @@ function Friends({ ctx }) {
 
 function Group({ ctx, group, back }) {
   const { data, me } = ctx
+  const [editing, setEditing] = useState(false)
   const [seg, setSeg] = useState(() => { const s = nextSeg || 'plans'; nextSeg = null; return s })
   const members = data.members[group.id] || []
   const plans = sortPlans(visiblePlans(data, me).filter((p) => p.group_id === group.id && !isPast(p)), data, me)
@@ -136,20 +137,84 @@ function Group({ ctx, group, back }) {
       <button className="link strong" onClick={back} style={{ marginBottom: 10 }}>‹ Groupes</button>
       <div className="top">
         <div className="row nowrap" style={{ gap: 10 }}>
-          <span className="gav" style={{ background: group.color }}>{group.name[0]?.toUpperCase()}</span>
-          <div className="plan-body"><h2 style={{ fontSize: 22 }}>{group.name}</h2><span className="sub">{members.length} membre{members.length > 1 ? 's' : ''}</span></div>
+          {group.myRole === 'admin'
+            ? <button className="avatar-btn avatar-edit" style={{ borderRadius: 14 }} onClick={() => setEditing(true)} aria-label="Modifier le groupe"><GroupAvatar g={group} /><span className="avatar-cam" aria-hidden="true">✎</span></button>
+            : <GroupAvatar g={group} />}
+          <div className="plan-body"><h2 style={{ fontSize: 22 }}>{group.name}</h2><span className="sub">{members.length} membre{members.length > 1 ? 's' : ''}{group.myRole === 'admin' && <> · <button className="link small" style={{ padding: 0, color: 'var(--accent)' }} onClick={() => setEditing(true)}>Modifier</button></>}</span></div>
         </div>
         <button className="round" onClick={() => ctx.newPlan(group.id)} aria-label="Proposer un plan">+</button>
       </div>
       <div className="seg">
         {[['plans', 'Plans'], ['jeu', 'Jeu'], ['sam', 'SAM'], ['membres', 'Membres'], ['conso', 'Conso']].map(([k, l]) => <button key={k} aria-pressed={seg === k} onClick={() => setSeg(k)}>{l}</button>)}
       </div>
+      {editing && <EditGroup ctx={ctx} group={group} onClose={() => setEditing(false)} />}
       {seg === 'plans' && (plans.length ? plans.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} />) : <div className="empty">Aucun plan pour l'instant.</div>)}
       {seg === 'jeu' && <Game ctx={ctx} group={group} members={members} />}
       {seg === 'sam' && <Sam ctx={ctx} group={group} members={members} />}
       {seg === 'membres' && <Members ctx={ctx} group={group} members={members} back={back} />}
       {seg === 'conso' && <GroupConso ctx={ctx} group={group} members={members} />}
     </>
+  )
+}
+
+export function GroupAvatar({ g }) {
+  if (g.avatar_url) return <img className="gav" src={g.avatar_url} alt="" style={{ objectFit: 'cover' }} />
+  return <span className="gav" style={{ background: g.color }}>{g.name[0]?.toUpperCase()}</span>
+}
+
+// Nom et photo du groupe : réservé aux admins (le créateur l'est d'office)
+function EditGroup({ ctx, group, onClose }) {
+  const { me } = ctx
+  const [run, busy] = useAction()
+  const toast = useToast()
+  const [name, setName] = useState(group.name)
+  const [photo, setPhoto] = useState(group.avatar_url || null)
+  const [uploading, setUploading] = useState(false)
+  const removeOld = (url) => {
+    const old = url?.split('/avatars/')[1]
+    if (old && old.startsWith(me.id + '/')) supabase.storage.from('avatars').remove([old]).then(() => {}, () => {})
+  }
+  const pick = async (e) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    setUploading(true)
+    try {
+      const path = `${me.id}/groupe-${group.id}-${Date.now()}.jpg`
+      const { error } = await supabase.storage.from('avatars').upload(path, await squareImage(f), { contentType: 'image/jpeg' })
+      if (error) throw error
+      setPhoto(supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl)
+    } catch {
+      toast("La photo n'a pas pu être envoyée")
+    }
+    setUploading(false)
+  }
+  const save = async (e) => {
+    e.preventDefault()
+    if (!name.trim()) return
+    const r = await run(() => supabase.from('groups').update(photo === (group.avatar_url || null) ? { name: name.trim() } : { name: name.trim(), avatar_url: photo }).eq('id', group.id).select().single(), 'Groupe modifié')
+    if (r?.data) { if (group.avatar_url && group.avatar_url !== photo) removeOld(group.avatar_url); await ctx.reload(); onClose() }
+  }
+  return (
+    <Sheet onClose={onClose}>
+      <h3 className="sheet-title">Modifier le groupe</h3>
+      <form onSubmit={save}>
+        <div className="row" style={{ gap: 12 }}>
+          <label className="avatar-btn avatar-edit" style={{ borderRadius: 14, cursor: 'pointer', margin: 0 }}>
+            <GroupAvatar g={{ ...group, name: name || group.name, avatar_url: photo }} />
+            <span className="avatar-cam" aria-hidden="true">{uploading ? '…' : '+'}</span>
+            <input type="file" accept="image/*" hidden onChange={pick} disabled={uploading} />
+          </label>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="meta">{uploading ? 'Envoi…' : photo ? 'Touche la photo pour la changer' : 'Touche pour ajouter une photo'}</span>
+            {photo && !uploading && <button type="button" className="link small danger" style={{ padding: 0 }} onClick={() => setPhoto(null)}>Retirer</button>}
+          </div>
+        </div>
+        <label htmlFor="eg-name">Nom du groupe</label>
+        <input id="eg-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required />
+        <button className="btn wide" disabled={busy || uploading} style={{ marginTop: 14 }}>Enregistrer</button>
+      </form>
+    </Sheet>
   )
 }
 
