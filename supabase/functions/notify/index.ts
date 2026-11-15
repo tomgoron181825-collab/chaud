@@ -4,6 +4,7 @@
 //   - chauds   : un pote est chaud (aujourd'hui ou demain)
 //   - joins    : quelqu'un dit « Moi aussi » à TON chaud
 //   - guests   : un ami t'invite en +1 à un plan
+//   - game     : rappel du jeu de la semaine à 9 h, seulement si tu n'as pas encore voté
 // Désactivées par défaut (à activer dans « Mon profil ») :
 //   - responses : quelqu'un répond à un plan que tu as proposé
 //   - messages  : un message sur un plan où tu vas
@@ -21,8 +22,8 @@ const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SE
 webpush.setVapidDetails(APP_URL, Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!)
 
 type Msg = { title: string; body: string; url: string; tag: string }
-type Pref = 'plans' | 'chauds' | 'joins' | 'guests' | 'responses' | 'messages' | 'photos'
-const DEFAULTS: Record<Pref, boolean> = { plans: true, chauds: true, joins: true, guests: true, responses: false, messages: false, photos: false }
+type Pref = 'plans' | 'chauds' | 'joins' | 'guests' | 'game' | 'responses' | 'messages' | 'photos'
+const DEFAULTS: Record<Pref, boolean> = { plans: true, chauds: true, joins: true, guests: true, game: true, responses: false, messages: false, photos: false }
 
 // Ceux qui participent à un plan : ceux qui viennent (ou peut-être), le créateur et les +1
 async function participants(planId: string, createdBy: string, statuses = ['go', 'maybe']) {
@@ -62,7 +63,76 @@ async function once(key: string) {
   return !error
 }
 
+// Jeu de la semaine : mêmes questions que dans l'app (src/components/Game.jsx)
+const QUESTIONS = [
+  "d'arriver en retard à sa propre soirée",
+  'de proposer un plan à 2 h du matin',
+  'de répondre sur le groupe 3 jours après',
+  'de lancer un karaoké sans prévenir',
+  'de devenir célèbre',
+  'de mettre une heure à choisir un resto',
+  'de se perdre même avec un GPS',
+  "d'avoir 12 alarmes le matin",
+  'de partir en voyage sur un coup de tête',
+  "d'oublier un anniversaire",
+  "de connaître les paroles de toutes les chansons",
+  'de ramener un nouveau pote à chaque soirée',
+  "de s'endormir en premier en soirée",
+  'de devenir millionnaire',
+  "d'être le premier sur la piste de danse",
+  'de tomber amoureux en vacances',
+  'de survivre à une apocalypse zombie',
+  "d'arriver les mains vides",
+  'de faire une blague nulle et de rire tout seul',
+  'de rater son train',
+  "d'organiser le prochain voyage du groupe",
+  'de prendre 200 photos pour une story',
+  'de commander toujours la même chose',
+  'de garder un secret jusqu\'au bout',
+  "de se faire des potes avec des inconnus",
+  "de dire « on part dans 5 minutes » et rester 2 heures",
+  'de changer de coupe de cheveux sur un coup de tête',
+  'de se vexer à un jeu de société',
+  'de faire le SAM sans qu\'on lui demande',
+  'de raconter la même anecdote pour la dixième fois',
+]
+const questionOf = (week: string) => {
+  const n = Math.round(Date.parse(week + 'T12:00:00Z') / (7 * 864e5))
+  return QUESTIONS[((n % QUESTIONS.length) + QUESTIONS.length) % QUESTIONS.length]
+}
+
 async function build(table: string, k: Record<string, string>): Promise<{ to: string[]; msg: Msg; pref: Pref } | null> {
+  // Rappel du jeu, lancé chaque matin par la base (pg_cron) : seulement à 9 h heure de Paris,
+  // une fois par jour, et seulement pour ceux qui n'ont pas encore voté dans un de leurs groupes
+  if (table === 'game') {
+    const paris = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
+    if (paris.getHours() !== 9) return null
+    const today = `${paris.getFullYear()}-${String(paris.getMonth() + 1).padStart(2, '0')}-${String(paris.getDate()).padStart(2, '0')}`
+    if (!(await once('game:' + today))) return null
+    const m = new Date(today + 'T12:00:00Z')
+    m.setUTCDate(m.getUTCDate() - ((m.getUTCDay() + 6) % 7))
+    const week = m.toISOString().slice(0, 10)
+    const [{ data: mem }, { data: votes }] = await Promise.all([
+      db.from('group_members').select('group_id, user_id'),
+      db.from('game_votes').select('group_id, voter').eq('week', week),
+    ])
+    const size = new Map<string, number>()
+    for (const r of mem || []) size.set(r.group_id, (size.get(r.group_id) || 0) + 1)
+    const voted = new Set((votes || []).map((v) => v.group_id + ':' + v.voter))
+    const to = [...new Set((mem || []).filter((r) => (size.get(r.group_id) || 0) >= 2 && !voted.has(r.group_id + ':' + r.user_id)).map((r) => r.user_id as string))]
+    const last = paris.getDay() === 0
+    return {
+      to,
+      msg: {
+        title: last ? 'Dernier jour pour voter !' : 'Jeu de la semaine',
+        body: `Qui de nous est le plus susceptible ${questionOf(week)} ?`,
+        url: APP_URL,
+        tag: 'game-' + week,
+      },
+      pref: 'game',
+    }
+  }
+
   if (table === 'plans') {
     const { data: p } = await db.from('plans').select('*').eq('id', k.id).maybeSingle()
     // Un plan né d'un « chaud » : ceux qui ont dit oui le savent déjà

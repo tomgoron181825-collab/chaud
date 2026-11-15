@@ -4,10 +4,14 @@ import PlanCard, { visiblePlans, sortPlans } from '../components/PlanCard'
 import { Face, Faces, useAction, useToast } from '../components/ui'
 import { shareInvite } from '../lib/invite'
 import { GameCard } from '../components/Game'
+import Calendar from '../components/Calendar'
+import { useState } from 'react'
 import { NotifCard } from '../components/Notifs'
 
 export default function Home({ ctx }) {
   const { data, me } = ctx
+  const [view, setView] = useState(() => { try { return localStorage.getItem('home-view') || 'list' } catch { return 'list' } })
+  const pickView = (v) => { setView(v); try { localStorage.setItem('home-view', v) } catch {} }
   const now = new Date()
   const today = `${DAYS[now.getDay()].replace('.', '')} ${now.getDate()} ${MONTHS[now.getMonth()]}`
 
@@ -35,6 +39,11 @@ export default function Home({ ctx }) {
     <>
       <Header ctx={ctx} today={today} />
       {data.groups.length > 0 && <NotifCard me={me} />}
+      <div className="seg">
+        <button aria-pressed={view === 'list'} onClick={() => pickView('list')}>Liste</button>
+        <button aria-pressed={view === 'cal'} onClick={() => pickView('cal')}>Calendrier</button>
+      </div>
+      {view === 'cal' ? <Calendar ctx={ctx} /> : <>
       {data.groups.length > 0 && <Chauds ctx={ctx} />}
       {data.groups.length > 0 && <GameCard ctx={ctx} />}
       {todo.length > 0 && <><div className="section-label">En attente de ta réponse</div>{todo.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} showGroup />)}</>}
@@ -54,6 +63,7 @@ export default function Home({ ctx }) {
           })}
         </>
       )}
+      </>}
     </>
   )
 }
