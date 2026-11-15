@@ -74,13 +74,19 @@ export function weekOf(shift = 0) {
   d.setDate(d.getDate() + shift)
   return iso(d)
 }
+// Passage du jeu de la semaine à la question du jour le 15 nov. 2026 : ce jour-là,
+// on garde la question de la semaine et les votes déjà faits (enregistrés sous le lundi 9 nov.)
+const LEGACY = { '2026-11-15': { key: '2026-11-09', q: 'de se vexer à un jeu de société' } }
+const keyOf = (day) => LEGACY[day]?.key || day
+
 export function questionOf(day) {
+  if (LEGACY[day]) return LEGACY[day].q
   const n = Math.round(Date.parse(day + 'T12:00:00Z') / 864e5)
   return QUESTIONS[((n % QUESTIONS.length) + QUESTIONS.length) % QUESTIONS.length]
 }
 
 async function results(groupId, week) {
-  const { data, error } = await supabase.rpc('game_results', { g: groupId, wk: week })
+  const { data, error } = await supabase.rpc('game_results', { g: groupId, wk: keyOf(week) })
   if (error) throw error
   return data
 }
@@ -98,7 +104,7 @@ export default function Game({ ctx, group, members }) {
   useEffect(() => { load() }, [group.id])
 
   const vote = async (uid) => {
-    const { error } = await supabase.rpc('game_vote', { g: group.id, wk: week, t: uid })
+    const { error } = await supabase.rpc('game_vote', { g: group.id, wk: keyOf(week), t: uid })
     if (error) return toast("Le vote n'est pas passé, réessaie")
     setChanging(false); load()
   }
