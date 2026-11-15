@@ -85,3 +85,13 @@ export async function compressImage(file, max = 1600) {
   c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
   return new Promise((res) => c.toBlob((b) => res(b || file), 'image/jpeg', 0.82))
 }
+
+// Photo de profil : carré centré de 320 px, JPEG léger
+export async function squareImage(file, size = 320) {
+  const bmp = await createImageBitmap(file)
+  const side = Math.min(bmp.width, bmp.height)
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  c.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, size, size)
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.85))
+}

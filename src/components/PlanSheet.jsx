@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
-import { TYPES, when, isPast, euro, settle, icsFor, compressImage } from '../lib/format'
+import { TYPES, when, isPast, euro, settle, icsFor } from '../lib/format'
 import { Sheet, Face, Faces, useAction, useToast } from './ui'
 
 const STATUS = [['go', 'Je viens'], ['maybe', 'Peut-être'], ['no', 'Pas dispo']]
@@ -62,7 +62,6 @@ export default function PlanSheet({ ctx, plan, onClose }) {
         </>
       )}
 
-      {past && <Photos ctx={ctx} plan={plan} />}
       {past && (data.rides[plan.id] || []).length > 0 && (
         <div className="card" style={{ marginTop: 12 }}>SAM de la soirée : <b>{(data.rides[plan.id] || []).map((r) => data.profiles[r.driver_id]?.pseudo).join(', ')}</b>. Merci !</div>
       )}
@@ -287,89 +286,5 @@ function Comments({ ctx, plan, run, after }) {
       {!list.length && <p className="note" style={{ marginTop: 0 }}>Pas encore de message.</p>}
       <form className="inputrow" onSubmit={send}><input value={body} onChange={(e) => setBody(e.target.value)} placeholder="Écrire sur ce plan…" aria-label="Message" maxLength={1000} /><button className="btn small">Envoyer</button></form>
     </>
-  )
-}
-
-function Photos({ ctx, plan }) {
-  const { data, me } = ctx
-  const photos = data.photos[plan.id] || []
-  const [urls, setUrls] = useState({})
-  const [uploading, setUploading] = useState(0)
-  const [reel, setReel] = useState(false)
-  const toast = useToast()
-
-  useEffect(() => {
-    const missing = photos.filter((p) => !urls[p.path]).map((p) => p.path)
-    if (!missing.length) return
-    supabase.storage.from('photos').createSignedUrls(missing, 3600).then(({ data: d }) => {
-      if (!d) return
-      setUrls((u) => { const n = { ...u }; d.forEach((x) => { if (x.signedUrl) n[x.path] = x.signedUrl }); return n })
-    })
-  }, [photos.map((p) => p.path).join()])
-
-  const upload = async (files) => {
-    files = [...files]
-    if (!files.length) return
-    setUploading(files.length)
-    let ok = 0
-    for (const f of files) {
-      try {
-        const blob = await compressImage(f)
-        const path = `${plan.group_id}/${plan.id}/${crypto.randomUUID()}.jpg`
-        const { error } = await supabase.storage.from('photos').upload(path, blob, { contentType: 'image/jpeg' })
-        if (error) throw error
-        const { error: e2 } = await supabase.from('photos').insert({ plan_id: plan.id, path })
-        if (e2) throw e2
-        ok++
-      } catch (e) {
-        toast("Une photo n'a pas pu être envoyée")
-      }
-      setUploading((n) => n - 1)
-    }
-    if (ok) toast(`${ok} photo${ok > 1 ? 's' : ''} ajoutée${ok > 1 ? 's' : ''}`)
-    ctx.reload()
-  }
-
-  const remove = async (p) => {
-    if (!window.confirm('Retirer cette photo ?')) return
-    await supabase.storage.from('photos').remove([p.path])
-    await supabase.from('photos').delete().eq('id', p.id)
-    ctx.reload()
-  }
-
-  return (
-    <>
-      <div className="section-label">Photos de la soirée · {photos.length}</div>
-      <div className="photos">
-        {photos.map((p) => (
-          <div key={p.id} className="ph" style={{ backgroundImage: urls[p.path] ? `url("${urls[p.path]}")` : undefined }}>
-            <span>{data.profiles[p.user_id]?.pseudo}</span>
-            {p.user_id === me.id && <button className="ph-del" onClick={() => remove(p)} aria-label="Retirer la photo">✕</button>}
-          </div>
-        ))}
-        <label className="addph">
-          {uploading ? `Envoi… (${uploading})` : '+ Ajouter mes photos'}
-          <input type="file" accept="image/*" multiple onChange={(e) => { upload(e.target.files); e.target.value = '' }} />
-        </label>
-      </div>
-      <p className="note">Visibles seulement par les membres du groupe.</p>
-      {photos.length >= 3 && <button className="btn ghost wide" onClick={() => setReel(true)}>Voir la vidéo souvenir</button>}
-      {reel && <Reel plan={plan} photos={photos} urls={urls} profiles={data.profiles} onClose={() => setReel(false)} />}
-    </>
-  )
-}
-
-function Reel({ plan, photos, urls, profiles, onClose }) {
-  const [i, setI] = useState(0)
-  useEffect(() => { const t = setInterval(() => setI((x) => (x + 1) % photos.length), 2000); return () => clearInterval(t) }, [photos.length])
-  const p = photos[i]
-  const d = new Date(plan.starts_at)
-  return (
-    <div className="reel" onClick={onClose}>
-      <div key={i} className="reel-img" style={{ backgroundImage: urls[p.path] ? `url("${urls[p.path]}")` : undefined }} />
-      <div className="reel-bar">{photos.map((_, k) => <i key={k} className={k <= i ? 'on' : ''} />)}</div>
-      <div className="reel-cap"><div className="reel-title">{plan.title}</div><div>{d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · photo de {profiles[p.user_id]?.pseudo}</div></div>
-      <button className="btn small reel-close" onClick={onClose}>Fermer</button>
-    </div>
   )
 }

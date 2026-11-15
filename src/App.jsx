@@ -5,7 +5,7 @@ import { useAppData } from './data'
 import { TabIcon, useToast, frError } from './components/ui'
 import Auth, { Onboarding } from './screens/Auth'
 import Home from './screens/Home'
-import Groups from './screens/Groups'
+import Groups, { openSeg } from './screens/Groups'
 import Conso from './screens/Conso'
 import Bilan from './screens/Bilan'
 import PlanSheet from './components/PlanSheet'
@@ -13,9 +13,13 @@ import NewPlanSheet from './components/NewPlanSheet'
 import NewChaudSheet from './components/NewChaudSheet'
 import ProfileSheet from './components/ProfileSheet'
 import { isStandalone, refreshPush } from './lib/push'
+import { captureInvite, pendingInvite, clearInvite } from './lib/invite'
+import { cacheGet, cacheSet, flushDrinks, withTimeout } from './lib/offline'
 
 const TABS = [['home', 'À venir'], ['groups', 'Groupes'], ['conso', 'Conso'], ['bilan', 'Bilan']]
 
+// Invitation d'un pote (?ami=CODE), gardée jusqu'à l'inscription
+captureInvite()
 // Code d'invitation reçu par lien (?join=CODE), gardé jusqu'à la connexion
 const params = new URLSearchParams(location.search)
 if (params.get('join')) {
@@ -32,26 +36,41 @@ export default function App() {
 
   useEffect(() => {
     if (!configured) return
-    supabase.auth.getSession().then(({ data }) => setSession(data.session))
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+    // Sans réseau, Supabase peut ne pas réussir à renouveler la connexion : on garde celle du téléphone
+    const stored = () => {
+      try {
+        const k = Object.keys(localStorage).find((x) => /^sb-.*-auth-token$/.test(x))
+        const s = k && JSON.parse(localStorage.getItem(k))
+        return s?.user ? s : null
+      } catch { return null }
+    }
+    const offlineSession = () => (navigator.onLine ? null : stored())
+    withTimeout(supabase.auth.getSession(), 5000)
+      .then(({ data }) => setSession(data.session || offlineSession()), () => setSession((x) => (x === undefined ? stored() : x)))
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => setSession(s || (e === 'SIGNED_OUT' ? null : offlineSession())))
     return () => sub.subscription.unsubscribe()
   }, [])
 
   const userId = session?.user?.id
   useEffect(() => {
     if (!userId) { setProfile(undefined); return }
-    supabase.from('profiles').select('*').eq('id', userId).maybeSingle().then(({ data }) => setProfile(data || null))
+    withTimeout(supabase.from('profiles').select('*').eq('id', userId).maybeSingle()).then(({ data, error }) => {
+      // Hors connexion : on reprend le profil gardé sur le téléphone
+      if (error) return setProfile(cacheGet('profile:' + userId) || null)
+      if (data) cacheSet('profile:' + userId, data)
+      setProfile(data || null)
+    }, () => setProfile(cacheGet('profile:' + userId) || null))
   }, [userId])
 
   if (!configured) return <Setup />
   if (session === undefined || (session && profile === undefined)) return <Splash />
   if (!session) return <Auth />
   if (!profile) return <Onboarding user={session.user} onDone={setProfile} />
-  return <Main me={profile} setMe={setProfile} />
+  return <Main me={profile} setMe={(p) => { if (p) cacheSet('profile:' + p.id, p); setProfile(p) }} />
 }
 
 function Main({ me, setMe }) {
-  const { data, error, reload } = useAppData(me.id)
+  const { data, error, reload, offline } = useAppData(me.id)
   const [tab, setTab] = useState('home')
   const [groupView, setGroupView] = useState(null)
   const [planId, setPlanId] = useState(null)
@@ -66,6 +85,11 @@ function Main({ me, setMe }) {
     if (isStandalone()) up.installed = true
     supabase.from('profiles').update(up).eq('id', me.id).then(() => {}, () => {})
     refreshPush(me.id)
+    // Verres ajoutés sans réseau : envoyés dès que ça revient
+    const flush = () => flushDrinks(me.id)
+    flush()
+    window.addEventListener('online', flush)
+    return () => window.removeEventListener('online', flush)
   }, [])
 
   // Ouvrir le plan d'une notification
@@ -89,6 +113,17 @@ function Main({ me, setMe }) {
     })
   }, [])
 
+  // Devenir ami avec le pote qui a envoyé le lien d'invitation
+  useEffect(() => {
+    const inv = pendingInvite()
+    if (!inv) return
+    supabase.rpc('accept_invite', { code: inv.code }).then(({ data: id, error: e }) => {
+      if (e) return
+      clearInvite()
+      if (id) { toast(`Toi et ${inv.de || 'ton pote'} êtes maintenant amis`); reload() }
+    })
+  }, [])
+
   if (!data) return error ? <div className="center"><p className="error">{error}</p><button className="btn" onClick={reload}>Réessayer</button></div> : <Splash />
 
   const ctx = {
@@ -97,12 +132,13 @@ function Main({ me, setMe }) {
     newPlan: (groupId) => setNewPlan({ groupId: groupId || groupView || data.groups[0]?.id }),
     newChaud: () => setNewChaud(true),
     openProfile: () => setProfileOpen(true),
-    openGroup: (id) => { setTab('groups'); setGroupView(id) },
+    openGroup: (id, seg) => { if (seg) openSeg(seg); setTab('groups'); setGroupView(id) },
   }
   const plan = planId && data.plans.find((p) => p.id === planId)
 
   return (
     <div className="app">
+      {offline && <div className="offline-bar">Hors connexion · tu peux quand même noter tes verres</div>}
       <main className="screen" key={tab}>
         {tab === 'home' && <Home ctx={ctx} />}
         {tab === 'groups' && <Groups ctx={ctx} groupView={groupView} setGroupView={setGroupView} />}

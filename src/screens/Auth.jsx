@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { APP_NAME } from '../config'
 import { COLORS } from '../lib/format'
 import { frError, ErrorNote } from '../components/ui'
+import { pendingInvite } from '../lib/invite'
 
 const age = (iso) => {
   if (!iso) return 0
@@ -21,6 +22,7 @@ export default function Auth() {
   const [err, setErr] = useState(null)
   const [info, setInfo] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [invite] = useState(pendingInvite)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -59,6 +61,7 @@ export default function Auth() {
     <div className="auth">
       <div className="logo big">{APP_NAME}</div>
       <p className="tagline">Les plans de tes potes, au même endroit.</p>
+      {invite && mode === 'signup' && <div className="card invite-banner"><b>{invite.de || 'Un pote'} t'invite sur {APP_NAME}</b><div className="meta">Crée ton compte, vous serez directement amis.</div></div>}
       <div className="seg">
         <button aria-pressed={mode === 'signup'} onClick={() => setMode('signup')}>Créer un compte</button>
         <button aria-pressed={mode === 'login'} onClick={() => setMode('login')}>Se connecter</button>

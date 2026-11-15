@@ -4,6 +4,12 @@ import { COLORS, isPast, fmtDay, fmtU } from '../lib/format'
 import { loadYearStats } from '../data'
 import PlanCard, { visiblePlans, sortPlans } from '../components/PlanCard'
 import { Face, useAction, useToast } from '../components/ui'
+import { shareInvite } from '../lib/invite'
+import Game from '../components/Game'
+
+// Onglet à ouvrir directement dans un groupe (ex. « jeu » depuis l'accueil)
+let nextSeg = null
+export const openSeg = (s) => { nextSeg = s }
 
 export default function Groups({ ctx, groupView, setGroupView }) {
   const group = groupView && ctx.data.groups.find((g) => g.id === groupView)
@@ -84,21 +90,15 @@ function Friends({ ctx }) {
     const r = await run(() => supabase.from('friendships').delete().or(`and(requester.eq.${me.id},addressee.eq.${id}),and(requester.eq.${id},addressee.eq.${me.id})`))
     if (r) ctx.reload()
   }
-  const shareCode = async () => {
-    const text = `Ajoute-moi en ami sur l'app avec mon code : ${me.friend_code}`
-    if (navigator.share) { try { await navigator.share({ text }); return } catch { return } }
-    try { await navigator.clipboard.writeText(me.friend_code); toast('Code copié') } catch { toast(me.friend_code) }
-  }
-
   return (
     <>
       <div className="section-label">Mes amis</div>
       <div className="card" style={{ marginTop: 0 }}>
         <div className="row between">
           <div><div className="meta">Mon code ami</div><div className="big" style={{ fontSize: 24, letterSpacing: '.08em' }}>{me.friend_code}</div></div>
-          <button className="btn small ghost" onClick={shareCode}>Envoyer</button>
+          <button className="btn small" onClick={() => shareInvite(me, toast)}>Inviter un pote</button>
         </div>
-        <p className="note" style={{ marginTop: 6 }}>Tes amis peuvent t'inviter en +1 à leurs soirées, même si tu n'es pas dans leur groupe.</p>
+        <p className="note" style={{ marginTop: 6 }}>Envoie le lien à un pote : il installe l'app et vous êtes directement amis. Tes amis peuvent t'inviter en +1 à leurs soirées.</p>
       </div>
       <form className="inputrow" onSubmit={add}>
         <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="Code ami d'un pote" aria-label="Code ami" maxLength={12} autoCapitalize="characters" />
@@ -127,7 +127,7 @@ function Friends({ ctx }) {
 
 function Group({ ctx, group, back }) {
   const { data, me } = ctx
-  const [seg, setSeg] = useState('plans')
+  const [seg, setSeg] = useState(() => { const s = nextSeg || 'plans'; nextSeg = null; return s })
   const members = data.members[group.id] || []
   const plans = sortPlans(visiblePlans(data, me).filter((p) => p.group_id === group.id && !isPast(p)), data, me)
 
@@ -142,9 +142,10 @@ function Group({ ctx, group, back }) {
         <button className="round" onClick={() => ctx.newPlan(group.id)} aria-label="Proposer un plan">+</button>
       </div>
       <div className="seg">
-        {[['plans', 'Plans'], ['sam', 'SAM'], ['membres', 'Membres'], ['conso', 'Conso']].map(([k, l]) => <button key={k} aria-pressed={seg === k} onClick={() => setSeg(k)}>{l}</button>)}
+        {[['plans', 'Plans'], ['jeu', 'Jeu'], ['sam', 'SAM'], ['membres', 'Membres'], ['conso', 'Conso']].map(([k, l]) => <button key={k} aria-pressed={seg === k} onClick={() => setSeg(k)}>{l}</button>)}
       </div>
       {seg === 'plans' && (plans.length ? plans.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} />) : <div className="empty">Aucun plan pour l'instant.</div>)}
+      {seg === 'jeu' && <Game ctx={ctx} group={group} members={members} />}
       {seg === 'sam' && <Sam ctx={ctx} group={group} members={members} />}
       {seg === 'membres' && <Members ctx={ctx} group={group} members={members} back={back} />}
       {seg === 'conso' && <GroupConso ctx={ctx} group={group} members={members} />}

@@ -19,7 +19,6 @@ export const PREFS = [
   ['guests', 'Invitation en +1', true],
   ['responses', 'Réponses à mes plans', false],
   ['messages', 'Messages des plans où je vais', false],
-  ['photos', "Nouvelles photos d'une soirée où j'étais", false],
 ]
 const DEFAULTS = Object.fromEntries(PREFS.map(([k, , d]) => [k, d]))
 

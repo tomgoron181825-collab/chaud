@@ -4,6 +4,7 @@ export function Face({ p, size }) {
   const name = p?.pseudo || '?'
   const style = { background: p?.color || '#888' }
   if (size) Object.assign(style, { width: size, height: size, fontSize: size * 0.42 })
+  if (p?.avatar_url) return <img className="face" src={p.avatar_url} alt="" title={name} style={size ? { width: size, height: size } : undefined} loading="lazy" />
   return <span className="face" style={style} title={name}>{name[0]?.toUpperCase()}</span>
 }
 

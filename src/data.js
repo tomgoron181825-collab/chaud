@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase'
 import { todayIso } from './lib/format'
+import { cacheGet, cacheSet, withTimeout } from './lib/offline'
 
 const by = (rows, key) => {
   const m = {}
@@ -29,7 +30,7 @@ export async function loadAll(userId) {
 
   const since = new Date(Date.now() - 45 * 864e5).toISOString()
   const [members, groupPlans, guestPlans, chauds] = await Promise.all([
-    groupIds.length ? q(supabase.from('group_members').select('group_id, user_id, role, share_conso, profiles(id, pseudo, color)').in('group_id', groupIds)) : none,
+    groupIds.length ? q(supabase.from('group_members').select('group_id, user_id, role, share_conso, profiles(id, pseudo, color, avatar_url)').in('group_id', groupIds)) : none,
     groupIds.length ? q(supabase.from('plans').select('*').in('group_id', groupIds).or(`starts_at.is.null,starts_at.gte.${since}`).order('starts_at', { ascending: true, nullsFirst: false })) : none,
     guestPlanIds.length ? q(supabase.from('plans').select('*').in('id', guestPlanIds).or(`starts_at.is.null,starts_at.gte.${since}`)) : none,
     groupIds.length ? q(supabase.from('chauds').select('*').in('group_id', groupIds).gte('day', todayIso()).order('created_at', { ascending: false })) : none,
@@ -38,14 +39,13 @@ export async function loadAll(userId) {
   const plans = [...groupPlans, ...guestPlans.filter((p) => !seen.has(p.id))]
   const planIds = plans.map((p) => p.id)
   const chaudIds = chauds.map((c) => c.id)
-  const [responses, comments, rides, needs, bring, expenses, photos, joins, guests] = await Promise.all([
+  const [responses, comments, rides, needs, bring, expenses, joins, guests] = await Promise.all([
     planIds.length ? q(supabase.from('plan_responses').select('*').in('plan_id', planIds)) : none,
     planIds.length ? q(supabase.from('plan_comments').select('*').in('plan_id', planIds).order('created_at')) : none,
     planIds.length ? q(supabase.from('rides').select('*, ride_passengers(user_id)').in('plan_id', planIds).order('created_at')) : none,
     planIds.length ? q(supabase.from('ride_needs').select('*').in('plan_id', planIds)) : none,
     planIds.length ? q(supabase.from('bring_items').select('*').in('plan_id', planIds).order('created_at')) : none,
     planIds.length ? q(supabase.from('expenses').select('*').in('plan_id', planIds).order('created_at')) : none,
-    planIds.length ? q(supabase.from('photos').select('*').in('plan_id', planIds).order('created_at')) : none,
     chaudIds.length ? q(supabase.from('chaud_joins').select('*').in('chaud_id', chaudIds)) : none,
     planIds.length ? q(supabase.from('plan_guests').select('*').in('plan_id', planIds)) : none,
   ])
@@ -55,14 +55,14 @@ export async function loadAll(userId) {
   members.forEach((m) => { if (m.profiles) profiles[m.user_id] = m.profiles })
   const wanted = new Set()
   friendships.forEach((f) => { wanted.add(f.requester); wanted.add(f.addressee) })
-  ;[...responses, ...comments, ...guests, ...photos].forEach((r) => wanted.add(r.user_id))
+  ;[...responses, ...comments, ...guests].forEach((r) => wanted.add(r.user_id))
   guests.forEach((g) => wanted.add(g.invited_by))
   rides.forEach((r) => { wanted.add(r.driver_id); r.ride_passengers.forEach((p) => wanted.add(p.user_id)) })
   expenses.forEach((e) => wanted.add(e.paid_by))
   plans.forEach((p) => wanted.add(p.created_by))
   const missing = [...wanted].filter((id) => id && !profiles[id])
   if (missing.length) {
-    const extra = await q(supabase.from('profiles').select('id, pseudo, color').in('id', missing))
+    const extra = await q(supabase.from('profiles').select('id, pseudo, color, avatar_url').in('id', missing))
     extra.forEach((p) => (profiles[p.id] = p))
   }
 
@@ -83,7 +83,6 @@ export async function loadAll(userId) {
     needs: by(needs, 'plan_id'),
     bring: by(bring, 'plan_id'),
     expenses: by(expenses, 'plan_id'),
-    photos: by(photos, 'plan_id'),
     guests: by(guests, 'plan_id'),
     chauds,
     joins: by(joins, 'chaud_id'),
@@ -92,24 +91,31 @@ export async function loadAll(userId) {
 }
 
 export function useAppData(userId) {
-  const [data, setData] = useState(null)
+  const [data, setData] = useState(() => (userId ? cacheGet('data:' + userId) : null))
   const [error, setError] = useState(null)
+  const [offline, setOffline] = useState(false)
   const timer = useRef(null)
 
   const reload = useCallback(async () => {
     if (!userId) return
     try {
-      setData(await loadAll(userId))
+      const d = await withTimeout(loadAll(userId), 10000)
+      setData(d)
+      cacheSet('data:' + userId, d)
       setError(null)
+      setOffline(false)
     } catch (e) {
-      setError(e.message || String(e))
+      // Pas de réseau : on garde la dernière copie enregistrée sur le téléphone
+      const cached = cacheGet('data:' + userId)
+      if (cached) { setData((x) => x || cached); setOffline(true) }
+      else setError(e.message || String(e))
     }
   }, [userId])
 
   useEffect(() => {
     if (!userId) return
     reload()
-    // Mise à jour en direct quand un pote répond, commente, ajoute une photo…
+    // Mise à jour en direct quand un pote répond, commente, propose un plan…
     const channel = supabase
       .channel('changes-' + userId)
       .on('postgres_changes', { event: '*', schema: 'public' }, () => {
@@ -119,14 +125,16 @@ export function useAppData(userId) {
       .subscribe()
     const onFocus = () => reload()
     window.addEventListener('focus', onFocus)
+    window.addEventListener('online', onFocus)
     return () => {
+      window.removeEventListener('online', onFocus)
       supabase.removeChannel(channel)
       window.removeEventListener('focus', onFocus)
       clearTimeout(timer.current)
     }
   }, [userId, reload])
 
-  return { data, error, reload }
+  return { data, error, reload, offline }
 }
 
 // Statistiques de l'année pour un groupe (SAM, trophées)
@@ -137,10 +145,9 @@ export async function loadYearStats(groupId) {
   const past = plans.filter((p) => p.starts_at < now)
   const pastIds = past.map((p) => p.id)
   const allIds = plans.map((p) => p.id)
-  const [rides, responses, photos] = await Promise.all([
+  const [rides, responses] = await Promise.all([
     allIds.length ? q(supabase.from('rides').select('plan_id, driver_id').in('plan_id', allIds)) : [],
     pastIds.length ? q(supabase.from('plan_responses').select('user_id').eq('status', 'go').in('plan_id', pastIds)) : [],
-    pastIds.length ? q(supabase.from('photos').select('user_id').in('plan_id', pastIds)) : [],
   ])
   const count = (rows, k) => rows.reduce((m, r) => ((m[r[k]] = (m[r[k]] || 0) + 1), m), {})
   const pastSet = new Set(pastIds)
@@ -150,6 +157,5 @@ export async function loadYearStats(groupId) {
     samUpcoming: rides.filter((r) => !pastSet.has(r.plan_id)),
     presence: count(responses, 'user_id'),
     organizer: count(past, 'created_by'),
-    photos: count(photos, 'user_id'),
   }
 }

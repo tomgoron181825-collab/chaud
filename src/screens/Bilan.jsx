@@ -45,7 +45,6 @@ export default function Bilan({ ctx }) {
     ['Toujours là', mostOf(stats.presence), (n) => `${n} plan${n > 1 ? 's' : ''} sur ${stats.pastPlans}`],
     ['Meilleur SAM', mostOf(stats.sam), (n) => `${n} fois`],
     ['Organisateur en chef', mostOf(stats.organizer), (n) => `${n} plan${n > 1 ? 's' : ''} proposé${n > 1 ? 's' : ''}`],
-    ['Photographe officiel', mostOf(stats.photos), (n) => `${n} photo${n > 1 ? 's' : ''}`],
   ].filter((t) => t[1]) : []
 
   return (

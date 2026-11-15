@@ -1,7 +1,9 @@
 import { supabase } from '../supabase'
 import { DAYS, MONTHS, isPast, todayIso } from '../lib/format'
 import PlanCard, { visiblePlans, sortPlans } from '../components/PlanCard'
-import { Face, Faces, useAction } from '../components/ui'
+import { Face, Faces, useAction, useToast } from '../components/ui'
+import { shareInvite } from '../lib/invite'
+import { GameCard } from '../components/Game'
 import { NotifCard } from '../components/Notifs'
 
 export default function Home({ ctx }) {
@@ -34,6 +36,7 @@ export default function Home({ ctx }) {
       <Header ctx={ctx} today={today} />
       {data.groups.length > 0 && <NotifCard me={me} />}
       {data.groups.length > 0 && <Chauds ctx={ctx} />}
+      {data.groups.length > 0 && <GameCard ctx={ctx} />}
       {todo.length > 0 && <><div className="section-label">En attente de ta réponse</div>{todo.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} showGroup />)}</>}
       <div className="section-label">Tes prochains plans</div>
       {rest.length ? rest.map((p) => <PlanCard key={p.id} plan={p} ctx={ctx} showGroup />) : <div className="empty">Rien de prévu. Lance un plan avec le +</div>}
@@ -41,12 +44,11 @@ export default function Home({ ctx }) {
         <>
           <div className="section-label">Souvenirs récents</div>
           {past.map((p) => {
-            const n = (data.photos[p.id] || []).length
             const d = new Date(p.starts_at)
             return (
               <button key={p.id} className="mem" onClick={() => ctx.openPlan(p.id)}>
                 <div className="mem-date"><b>{d.getDate()}</b><span>{MONTHS[d.getMonth()]}</span></div>
-                <div className="plan-body"><b>{p.title}</b><div className="meta">{n} photo{n > 1 ? 's' : ''}{data.groups.find((g) => g.id === p.group_id) ? ' · ' + data.groups.find((g) => g.id === p.group_id).name : ''}</div></div>
+                <div className="plan-body"><b>{p.title}</b><div className="meta">{data.groups.find((g) => g.id === p.group_id)?.name || 'Invité en +1'}</div></div>
               </button>
             )
           })}
@@ -57,13 +59,17 @@ export default function Home({ ctx }) {
 }
 
 function Header({ ctx, today }) {
+  const toast = useToast()
   return (
     <div className="top">
       <div className="row" style={{ gap: 10, flexWrap: 'nowrap' }}>
         <button className="avatar-btn" onClick={ctx.openProfile} aria-label="Mon profil"><Face p={ctx.me} size={38} /></button>
         <div><div className="sub">{today}</div><h2>À venir</h2></div>
       </div>
-      {ctx.data.groups.length > 0 && <button className="round" onClick={() => ctx.newPlan()} aria-label="Proposer un plan">+</button>}
+      <div className="row nowrap" style={{ gap: 8 }}>
+        <button className="btn small ghost" onClick={() => shareInvite(ctx.me, toast)}>Inviter</button>
+        {ctx.data.groups.length > 0 && <button className="round" onClick={() => ctx.newPlan()} aria-label="Proposer un plan">+</button>}
+      </div>
     </div>
   )
 }

@@ -14,7 +14,7 @@ export function useIsAdmin() {
 const ROWS = [
   ['Utilisateurs', [['inscrits', 'Inscrits'], ['nouveaux_24h', 'Nouveaux (24 h)'], ['nouveaux_7j', 'Nouveaux (7 jours)'], ['installes', "Ont installé l'app"], ['notifs', 'Notifs activées']]],
   ['Actifs', [['actifs_24h', 'Dernières 24 h'], ['actifs_7j', '7 derniers jours'], ['actifs_30j', '30 derniers jours']]],
-  ['Contenu', [['groupes', 'Groupes'], ['plans', 'Plans'], ['chauds', 'Chauds'], ['photos', 'Photos']]],
+  ['Contenu', [['groupes', 'Groupes'], ['plans', 'Plans'], ['chauds', 'Chauds']]],
 ]
 
 export default function StatsSheet({ onClose }) {

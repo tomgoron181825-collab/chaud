@@ -4,6 +4,7 @@ import { DRINKS, PRESET_DEFAULTS, units, fmtU } from '../lib/format'
 import { DrinkIcon, Sheet, Switch, useAction, useToast } from '../components/ui'
 import { estimateBac, fmtBac, preventionMessage, thresholdToast } from '../lib/prevention'
 import { fmtTime } from '../lib/format'
+import { cacheGet, cacheSet, queue, queueAdd, queueDel, flushDrinks, newId, withTimeout } from '../lib/offline'
 
 const STARTERS = [
   { name: 'Demi', kind: 'biere', cl: 25, deg: 5 },
@@ -28,29 +29,57 @@ export default function Conso({ ctx }) {
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState(false)
   const [settings, setSettings] = useState(undefined)
+  const [local, setLocal] = useState(false)
   const [, tick] = useState(0)
   const toast = useToast()
   useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 60000); return () => clearInterval(t) }, [])
 
-  const load = async () => {
-    const [p, t] = await Promise.all([
-      supabase.from('drink_presets').select('*').eq('user_id', me.id).order('created_at'),
-      supabase.from('drinks').select('*').eq('user_id', me.id).gte('drunk_at', nightStart().toISOString()).order('drunk_at'),
-      supabase.from('private_settings').select('*').eq('user_id', me.id).maybeSingle(),
-    ]).then((r) => { setSettings(r[2].data || null); return r })
-    setPresets(p.data || [])
-    setTonight(t.data || [])
+  // Verres de ce soir = ceux du serveur + ceux pas encore envoyés (sans réseau), triés par heure
+  const merge = (server) => {
+    const q = queue(me.id)
+    const since = nightStart().toISOString()
+    const ids = new Set(server.map((d) => d.id))
+    return [...server.filter((d) => !q.del.includes(d.id)), ...q.add.filter((d) => !ids.has(d.id) && d.drunk_at >= since)]
+      .sort((a, b) => a.drunk_at.localeCompare(b.drunk_at))
   }
-  useEffect(() => { load() }, [])
+  const load = async () => {
+    const K = 'conso:' + me.id
+    try {
+      await withTimeout(flushDrinks(me.id))
+      const [p, t, st] = await withTimeout(Promise.all([
+        supabase.from('drink_presets').select('*').eq('user_id', me.id).order('created_at'),
+        supabase.from('drinks').select('*').eq('user_id', me.id).gte('drunk_at', nightStart().toISOString()).order('drunk_at'),
+        supabase.from('private_settings').select('*').eq('user_id', me.id).maybeSingle(),
+      ]))
+      if (p.error || t.error || st.error) throw p.error || t.error || st.error
+      cacheSet(K, { presets: p.data || [], tonight: t.data || [], settings: st.data || null })
+      setPresets(p.data || []); setTonight(merge(t.data || [])); setSettings(st.data || null); setLocal(false)
+    } catch {
+      // Hors connexion : dernière copie gardée sur le téléphone
+      const c = cacheGet(K) || { presets: [], tonight: [], settings: null }
+      setPresets(c.presets); setTonight(merge(c.tonight)); setSettings(c.settings); setLocal(true)
+    }
+  }
+  useEffect(() => {
+    load()
+    window.addEventListener('online', load)
+    return () => window.removeEventListener('online', load)
+  }, [])
 
+  // Un verre est d'abord noté sur le téléphone (marche sans réseau), puis envoyé
   const add = async (d) => {
     const before = tonight.reduce((a, x) => a + Number(x.units), 0)
-    const r = await run(() => supabase.from('drinks').insert(d))
-    if (!r) return
+    const row = { id: newId(), user_id: me.id, kind: d.kind, name: d.name, units: d.units, drunk_at: new Date().toISOString() }
+    queueAdd(me.id, row)
+    setTonight((l) => [...l, row])
     toast(thresholdToast(before, before + Number(d.units)) || `${d.name} ajouté`)
-    load()
+    if (await flushDrinks(me.id)) setLocal(false)
   }
-  const undo = async (id) => { const r = await run(() => supabase.from('drinks').delete().eq('id', id)); if (r) load() }
+  const undo = async (id) => {
+    queueDel(me.id, id)
+    setTonight((l) => l.filter((d) => d.id !== id))
+    flushDrinks(me.id)
+  }
   const delPreset = async (id) => { const r = await run(() => supabase.from('drink_presets').delete().eq('id', id)); if (r) load() }
   const setShare = async (gid, v) => { const r = await run(() => supabase.from('group_members').update({ share_conso: v }).eq('group_id', gid).eq('user_id', me.id)); if (r) ctx.reload() }
 
@@ -105,6 +134,7 @@ export default function Conso({ ctx }) {
             {tonight.map((d) => <li key={d.id}><span>{d.name}{Number(d.units) > 0 && <span className="meta"> · {fmtU(d.units)} std</span>}</span><button className="link small" onClick={() => undo(d.id)}>Retirer</button></li>)}
           </ul>
         ) : <p className="note">Tape sur un de tes verres pour l'ajouter.</p>}
+        {(local || queue(me.id).add.length > 0) && <p className="note">Pas de réseau ? Pas de souci : tes verres sont gardés sur ton téléphone et partent tout seuls quand ça revient.</p>}
         {prev && <p className={'prev ' + prev.level}>{prev.text}</p>}
       </div>
 
