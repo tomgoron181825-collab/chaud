@@ -54,7 +54,9 @@ export default function App() {
   const userId = session?.user?.id
   useEffect(() => {
     if (!userId) { setProfile(undefined); return }
-    withTimeout(supabase.from('profiles').select('*').eq('id', userId).maybeSingle()).then(({ data, error }) => {
+    // Délai court seulement si on a une copie du profil sur le téléphone, sinon on attend la vraie réponse
+    const req = supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
+    ;(cacheGet('profile:' + userId) ? withTimeout(req) : req).then(({ data, error }) => {
       // Hors connexion : on reprend le profil gardé sur le téléphone
       if (error) return setProfile(cacheGet('profile:' + userId) || null)
       if (data) cacheSet('profile:' + userId, data)

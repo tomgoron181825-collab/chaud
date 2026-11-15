@@ -99,7 +99,7 @@ export function useAppData(userId) {
   const reload = useCallback(async () => {
     if (!userId) return
     try {
-      const d = await withTimeout(loadAll(userId), 10000)
+      const d = await (cacheGet('data:' + userId) ? withTimeout(loadAll(userId), 10000) : loadAll(userId))
       setData(d)
       cacheSet('data:' + userId, d)
       setError(null)
