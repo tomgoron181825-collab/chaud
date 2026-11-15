@@ -3,7 +3,7 @@ import { supabase, configured } from './supabase'
 import { APP_NAME } from './config'
 import { useAppData } from './data'
 import { TabIcon, useToast, frError } from './components/ui'
-import Auth, { Onboarding } from './screens/Auth'
+import Auth, { Onboarding, NewPassword } from './screens/Auth'
 import Home from './screens/Home'
 import Groups, { openSeg } from './screens/Groups'
 import Conso from './screens/Conso'
@@ -18,6 +18,8 @@ import { cacheGet, cacheSet, flushDrinks, withTimeout } from './lib/offline'
 
 const TABS = [['home', 'À venir'], ['groups', 'Groupes'], ['conso', 'Conso'], ['bilan', 'Bilan']]
 
+// Arrivée par le lien « mot de passe oublié » du mail
+const fromRecovery = /type=recovery/.test(location.hash)
 // Invitation d'un pote (?ami=CODE), gardée jusqu'à l'inscription
 captureInvite()
 // Code d'invitation reçu par lien (?join=CODE), gardé jusqu'à la connexion
@@ -33,6 +35,8 @@ if (pendingPlan) history.replaceState(null, '', location.pathname)
 export default function App() {
   const [session, setSession] = useState(undefined)
   const [profile, setProfile] = useState(undefined)
+  const [recovery, setRecovery] = useState(fromRecovery)
+  const toast = useToast()
 
   useEffect(() => {
     if (!configured) return
@@ -47,7 +51,7 @@ export default function App() {
     const offlineSession = () => (navigator.onLine ? null : stored())
     withTimeout(supabase.auth.getSession(), 5000)
       .then(({ data }) => setSession(data.session || offlineSession()), () => setSession((x) => (x === undefined ? stored() : x)))
-    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => setSession(s || (e === 'SIGNED_OUT' ? null : offlineSession())))
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => { if (e === 'PASSWORD_RECOVERY') setRecovery(true); setSession(s || (e === 'SIGNED_OUT' ? null : offlineSession())) })
     return () => sub.subscription.unsubscribe()
   }, [])
 
@@ -67,6 +71,7 @@ export default function App() {
   if (!configured) return <Setup />
   if (session === undefined || (session && profile === undefined)) return <Splash />
   if (!session) return <Auth />
+  if (recovery) return <NewPassword onDone={() => { setRecovery(false); toast('Mot de passe changé') }} />
   if (!profile) return <Onboarding user={session.user} onDone={setProfile} />
   return <Main me={profile} setMe={(p) => { if (p) cacheSet('profile:' + p.id, p); setProfile(p) }} />
 }

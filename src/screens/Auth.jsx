@@ -54,7 +54,7 @@ export default function Auth() {
   const forgot = async () => {
     if (!email) return setErr("Écris ton e-mail d'abord")
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname })
-    if (error) setErr(frError(error)); else setInfo('Un e-mail pour changer ton mot de passe vient de partir.')
+    if (error) setErr(frError(error)); else setInfo('Un e-mail vient de partir. Ouvre le lien dedans (pense à regarder les spams) : tu pourras choisir un nouveau mot de passe.')
   }
 
   return (
@@ -78,13 +78,52 @@ export default function Auth() {
         <label htmlFor="a-email">E-mail</label>
         <input id="a-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         <label htmlFor="a-pass">Mot de passe</label>
-        <input id="a-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />
+        <PasswordInput id="a-pass" value={password} onChange={setPassword} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />
         <ErrorNote error={err} />
         {info && <p className="info">{info}</p>}
         <button className="btn wide" disabled={busy}>{mode === 'signup' ? 'Créer mon compte' : 'Me connecter'}</button>
         {mode === 'login' && <button type="button" className="link" onClick={forgot}>Mot de passe oublié</button>}
       </form>
       {mode === 'signup' && <p className="note">Réservé aux 18 ans et plus. Ta conso reste privée sauf si tu choisis de la partager avec un groupe.</p>}
+    </div>
+  )
+}
+
+// Champ mot de passe avec un bouton pour l'afficher
+export function PasswordInput({ id, value, onChange, autoComplete }) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="pass">
+      <input id={id} type={show ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} required minLength={6} autoComplete={autoComplete} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+      <button type="button" className="link small pass-eye" onClick={() => setShow(!show)} aria-pressed={show}>{show ? 'Masquer' : 'Afficher'}</button>
+    </div>
+  )
+}
+
+// Après le lien « mot de passe oublié » reçu par mail : choisir un nouveau mot de passe
+export function NewPassword({ onDone }) {
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const save = async (e) => {
+    e.preventDefault()
+    setBusy(true); setErr(null)
+    const { error } = await supabase.auth.updateUser({ password })
+    setBusy(false)
+    if (error) return setErr(frError(error))
+    onDone()
+  }
+  return (
+    <div className="auth">
+      <div className="logo big">{APP_NAME}</div>
+      <p className="tagline">Choisis ton nouveau mot de passe.</p>
+      <form onSubmit={save}>
+        <label htmlFor="np-pass">Nouveau mot de passe</label>
+        <PasswordInput id="np-pass" value={password} onChange={setPassword} autoComplete="new-password" />
+        <p className="note">6 caractères minimum.</p>
+        <ErrorNote error={err} />
+        <button className="btn wide" disabled={busy}>Enregistrer</button>
+      </form>
     </div>
   )
 }

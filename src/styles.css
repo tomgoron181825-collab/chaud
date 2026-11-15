@@ -228,3 +228,8 @@ img.face { object-fit: cover; padding: 0; background: var(--line); }
 .game-card .k { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
 .invite-banner { border-left: 4px solid var(--pop); margin: 0 0 12px; text-align: left; }
 .offline-bar { position: sticky; top: 0; z-index: 5; background: var(--pop); color: var(--on-pop); font: 600 12px var(--body); text-align: center; padding: 6px 10px; }
+
+/* Mot de passe avec « Afficher » */
+.pass { position: relative; }
+.pass input { padding-right: 84px; }
+.pass-eye { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); padding: 6px !important; color: var(--accent) !important; font-weight: 700; }
