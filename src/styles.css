@@ -233,3 +233,6 @@ img.face { object-fit: cover; padding: 0; background: var(--line); }
 .pass { position: relative; }
 .pass input { padding-right: 84px; }
 .pass-eye { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); padding: 6px !important; color: var(--accent) !important; font-weight: 700; }
+
+/* Tirer pour actualiser */
+.ptr { position: fixed; top: env(safe-area-inset-top, 0px); left: 50%; z-index: 50; transform: translate(-50%, -50px); opacity: 0; background: var(--accent); color: var(--on-accent); font: 600 13px var(--body); padding: 8px 14px; border-radius: 999px; pointer-events: none; transition: opacity .1s; box-shadow: 0 4px 14px rgba(0,0,0,.15); }
